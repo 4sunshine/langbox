@@ -1,21 +1,12 @@
-from collections import defaultdict
-from itertools import chain
-import random
-import numpy as np
 import torch
-from torch.utils.data import Dataset, DataLoader, TensorDataset
 from tqdm import tqdm, trange
 import argparse
 from transformers import (
-    WEIGHTS_NAME,
     AdamW,
-    GPT2Config,
     GPT2LMHeadModel,
     GPT2Tokenizer,
-    OpenAIGPTConfig,
     OpenAIGPTLMHeadModel,
     OpenAIGPTTokenizer,
-    PreTrainedTokenizer,
     get_linear_schedule_with_warmup,
 )
 
@@ -23,7 +14,7 @@ from dataset.utils import set_seed, add_special_tokens_
 from dataset.text_dataset import get_data_loader
 from utils.sample import sample_sequence
 import logging
-import torch.nn.functional as F
+import tensorboardX
 import os
 
 # set up logging
@@ -35,7 +26,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Training params')
     parser.add_argument('--run_name', default='telegram', type=str)
     parser.add_argument('--input_file', default='chat.txt', type=str)
-    parser.add_argument('--model_type', default='openai-gpt', type=str)
+    parser.add_argument('--model_type', default='gpt2', type=str)
     parser.add_argument('--save_every', default=50, type=int)
     parser.add_argument('--max_input_lenth', default=400, type=int)
     parser.add_argument('--weight_decay', default=0, type=float)
@@ -51,8 +42,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def sample(model, tokenizer, max_history=2, no_info=False):
-    history = []
+def sample(model, tokenizer, max_history=2, no_info=False, max_generation_steps=10):
     speaker1_tag = '<speaker1>'
     speaker2_tag = '<speaker2>'
     speaker1_tag_id = tokenizer.convert_tokens_to_ids(speaker1_tag)
@@ -67,7 +57,7 @@ def sample(model, tokenizer, max_history=2, no_info=False):
     print(history)
     print('\n[Chat with the model! Send "h" to see the full history]\n')
     history = history.split('\n')
-    while True:
+    for i in range(max_generation_steps):
         message = None
         while not message:
             message = input(f'{speaker2_tag} ')
@@ -102,6 +92,7 @@ def sample(model, tokenizer, max_history=2, no_info=False):
         print(answer)
         # add answer to history
         history.append(answer)
+    return '\n'.join(history)
 
 
 def main(cfg):
@@ -116,14 +107,16 @@ def main(cfg):
 
     base_output_dir = os.path.join('runs', cfg.run_name)
     os.makedirs(base_output_dir, exist_ok=True)
+    log_dir = os.path.join(base_output_dir, 'tensorboard')
+    writer = tensorboardX.SummaryWriter(logdir=log_dir)
 
     logger.info("Prepare tokenizer, pretrained model and optimizer.")
-    tokenizer_class = GPT2Tokenizer if "gpt2" in model_type else OpenAIGPTTokenizer
+    tokenizer_class = GPT2Tokenizer  #if "gpt2" in model_type else OpenAIGPTTokenizer
     tokenizer = tokenizer_class.from_pretrained(model_type)
     # Load model
-    model_class = GPT2LMHeadModel if "gpt2" in model_type else OpenAIGPTLMHeadModel
+    model_class = GPT2LMHeadModel  #if "gpt2" in model_type else OpenAIGPTLMHeadModel
     model = model_class.from_pretrained(model_type)
-    model.to(cfg.device)
+    model.to(device)
 
     add_special_tokens_(model, tokenizer)
 
@@ -180,6 +173,7 @@ def main(cfg):
             tr_loss = loss.item()
             # Compute a running average of the loss
             av_loss = (step * av_loss + tr_loss) / (step + 1)
+            writer.add_scalar('train_loss', av_loss, global_step=global_step)
             pbar.set_description(f"Average loss: {av_loss:.4f}")
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
             if (step + 1) % gradient_accumulation_steps == 0:
@@ -200,12 +194,12 @@ def main(cfg):
                     torch.save(scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
 
                     model.eval()
-                    sample(model, tokenizer)
+                    history = sample(model, tokenizer)
+                    writer.add_text('Sample', history, global_step=global_step)
 
     # save model
-    output_dir = os.path.join('runs', cfg.run_name)
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    output_dir = os.path.join(base_output_dir, 'final')
+    os.makedirs(output_dir, exist_ok=True)
     logger.info(f"Saving model checkpoint to {output_dir}")
     model.save_pretrained(output_dir)
     tokenizer.save_pretrained(output_dir)
