@@ -7,7 +7,7 @@ from transformers import (
     GPT2Tokenizer,
     OpenAIGPTLMHeadModel,
     OpenAIGPTTokenizer,
-    get_linear_schedule_with_warmup,
+    get_linear_schedule_with_warmup, AutoModelWithLMHead, AutoTokenizer
 )
 
 from dataset.utils import set_seed, add_special_tokens_
@@ -27,16 +27,16 @@ def parse_args():
     parser.add_argument('--run_name', default='telegram', type=str)
     parser.add_argument('--input_file', default='chat.txt', type=str)
     parser.add_argument('--model_type', default='gpt2', type=str)
-    parser.add_argument('--save_every', default=50, type=int)
-    parser.add_argument('--max_input_lenth', default=400, type=int)
+    parser.add_argument('--save_every', default=10, type=int)
+    parser.add_argument('--max_input_lenth', default=100, type=int)
     parser.add_argument('--weight_decay', default=0, type=float)
-    parser.add_argument('--train_batch_size', default=8, type=int)
-    parser.add_argument('--gradient_accumulation_steps', default=8, type=int)
+    parser.add_argument('--train_batch_size', default=2, type=int)
+    parser.add_argument('--gradient_accumulation_steps', default=32, type=int)
     parser.add_argument('--warmup_steps', default=8, type=int)
     parser.add_argument('--lr', default=5e-5, type=float)
     parser.add_argument('--adam_epsilon', default=1e-8, type=float)
     parser.add_argument('--max_norm', default=1, type=float)
-    parser.add_argument('--n_epochs', default=2, type=int)
+    parser.add_argument('--n_epochs', default=10, type=int)
     parser.add_argument('--device', default='cuda', type=str)
     parser.add_argument('--seed', default=42, type=int)
     return parser.parse_args()
@@ -58,9 +58,10 @@ def sample(model, tokenizer, max_history=2, no_info=False, max_generation_steps=
     print('\n[Chat with the model! Send "h" to see the full history]\n')
     history = history.split('\n')
     for i in range(max_generation_steps):
-        message = None
+        message = None #'О стикерах вконтакте'
         while not message:
-            message = input(f'{speaker2_tag} ')
+            print(f'{speaker2_tag} writing...:')
+            message = input()
             if message == 'h':
                 print('\n'.join(history))
                 message = None
@@ -114,7 +115,7 @@ def main(cfg):
     tokenizer_class = GPT2Tokenizer  #if "gpt2" in model_type else OpenAIGPTTokenizer
     tokenizer = tokenizer_class.from_pretrained(model_type)
     # Load model
-    model_class = GPT2LMHeadModel  #if "gpt2" in model_type else OpenAIGPTLMHeadModel
+    model_class = AutoModelWithLMHead  #GPT2LMHeadModel  #if "gpt2" in model_type else OpenAIGPTLMHeadModel
     model = model_class.from_pretrained(model_type)
     model.to(device)
 
@@ -143,7 +144,10 @@ def main(cfg):
     # Check if we are training from a checkpoint or from a pretrained model
     if os.path.exists(model_type):
         # set global_step to gobal_step of last saved checkpoint from model path
-        global_step = int(model_type.split("-")[-1].split("/")[0])
+        try:
+            global_step = int(model_type.split("-")[-1].split("/")[0])
+        except ValueError:
+            global_step = 0
         epochs_trained = global_step // (len(data_loader) // gradient_accumulation_steps)
         steps_trained_in_current_epoch = global_step % (len(data_loader) // gradient_accumulation_steps)
         logger.info("Continuing training from checkpoint, will skip to saved global_step")
@@ -168,15 +172,16 @@ def main(cfg):
             inputs, labels = (batch, batch)
             inputs = inputs.to(device)
             labels = labels.to(device)
-            loss, *_ = model(inputs, labels=labels)
+            output = model(inputs, labels=labels)
+            loss, logits, past_key_values = output['loss'], output['logits'], output['past_key_values']
             loss.backward()
             tr_loss = loss.item()
             # Compute a running average of the loss
             av_loss = (step * av_loss + tr_loss) / (step + 1)
             writer.add_scalar('train_loss', av_loss, global_step=global_step)
             pbar.set_description(f"Average loss: {av_loss:.4f}")
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
             if (step + 1) % gradient_accumulation_steps == 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
                 optimizer.step()
                 scheduler.step()  # Update learning rate schedule
                 model.zero_grad()

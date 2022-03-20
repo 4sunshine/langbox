@@ -14,8 +14,9 @@ def read_input(file):
 
 
 class TextDataset(Dataset):
-    def __init__(self, input_file, tokenizer, max_input_length=400):
+    def __init__(self, input_file, tokenizer, **kwargs):
         # load the text data generated from before into memory
+        max_input_length = kwargs.get('max_input_length', 400)
         text = read_input(input_file)
         print("Tokenizing and building input...")
         # tokenize the whole file
@@ -39,7 +40,7 @@ class TextDataset(Dataset):
 
 def get_data_loader(tokenizer, input_file, **kwargs):
     """ Prepare the dataset for training and evaluation """
-    dataset = TextDataset(tokenizer, input_file, **kwargs)
+    dataset = TextDataset(input_file, tokenizer, **kwargs)
     print("Train dataset: {:,} samples".format(len(dataset)))
     print("Build dataloaders")
     train_batch_size = kwargs.get('train_batch_size', 8)
