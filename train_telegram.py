@@ -27,22 +27,22 @@ def parse_args():
     parser.add_argument('--run_name', default='telegram', type=str)
     parser.add_argument('--input_file', default='chat.txt', type=str)
     parser.add_argument('--model_type', default='gpt2', type=str)
-    parser.add_argument('--save_every', default=10, type=int)
-    parser.add_argument('--max_input_lenth', default=100, type=int)
+    parser.add_argument('--save_every', default=30, type=int)
+    parser.add_argument('--max_input_lenth', default=400, type=int)
     parser.add_argument('--weight_decay', default=0, type=float)
     parser.add_argument('--train_batch_size', default=2, type=int)
-    parser.add_argument('--gradient_accumulation_steps', default=32, type=int)
+    parser.add_argument('--gradient_accumulation_steps', default=16, type=int)
     parser.add_argument('--warmup_steps', default=8, type=int)
     parser.add_argument('--lr', default=5e-5, type=float)
     parser.add_argument('--adam_epsilon', default=1e-8, type=float)
     parser.add_argument('--max_norm', default=1, type=float)
-    parser.add_argument('--n_epochs', default=10, type=int)
+    parser.add_argument('--n_epochs', default=12, type=int)
     parser.add_argument('--device', default='cuda', type=str)
     parser.add_argument('--seed', default=42, type=int)
     return parser.parse_args()
 
 
-def sample(model, tokenizer, max_history=2, no_info=False, max_generation_steps=10):
+def sample(model, tokenizer, max_history=2, no_info=True, max_generation_steps=10):
     speaker1_tag = '<speaker1>'
     speaker2_tag = '<speaker2>'
     speaker1_tag_id = tokenizer.convert_tokens_to_ids(speaker1_tag)
@@ -65,6 +65,8 @@ def sample(model, tokenizer, max_history=2, no_info=False, max_generation_steps=
             if message == 'h':
                 print('\n'.join(history))
                 message = None
+            elif message == 'quit':
+                break
         # add new message to history
         history.append(f'{speaker2_tag} {message}')
         # keep only most recent conversation as input to the model
