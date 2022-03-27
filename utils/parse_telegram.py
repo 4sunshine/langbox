@@ -15,6 +15,9 @@ from tqdm import tqdm
 import numpy as np
 import random
 import torch
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+from utils.clean import clean_links, clean_emojis, clean_several_whitespaces
+import string
 
 logger = logging.getLogger(__file__)
 CACHE_PATH = 'cached_input_task2.txt'
@@ -30,6 +33,18 @@ def remove_control_characters(s):
     s = s.replace('&#13;', '').replace('&#10;', '')
     # removes all other control characters and the NULL byte (which causes issues when parsing with pandas)
     return "".join(ch for ch in s if unicodedata.category(ch)[0]!="C")
+
+
+def clean(text):
+    filters = (clean_links, clean_emojis, clean_several_whitespaces)
+    for f in filters:
+        text = f(text)
+    if len(text) == 0:
+        # text = '.'
+        return text
+    if text[-1] not in string.punctuation:
+        text += '.'
+    return text
 
 
 def read_conversation_data(data_path):
@@ -163,18 +178,18 @@ def convert_chat_to_text(path, out_path, speakers_2):
             if prev_sender_tag is None:
                 # beginning of chat with person
                 prev_sender_tag = sender_tag
-                current_messages = [remove_control_characters(text)]
+                current_messages = [clean(remove_control_characters(text))]
                 continue
             if prev_sender_tag in SPECIAL_TOKENS.keys():
                 if prev_sender_tag == sender_tag:
                     # concatenate/group messages by the same sender
-                    current_messages.append(remove_control_characters(text))
+                    current_messages.append(clean(remove_control_characters(text)))
                 else:
                     # dump previous messsages
                     output += '{} {}\n'.format(SPECIAL_TOKENS[prev_sender_tag], ' '.join(current_messages))
                     # new response by other
                     prev_sender_tag = sender_tag
-                    current_messages = [remove_control_characters(text)]
+                    current_messages = [clean(remove_control_characters(text))]
         if len(current_messages) > 0 and (prev_sender_tag in SPECIAL_TOKENS.keys()):
             output += '{} {}\n'.format(SPECIAL_TOKENS[prev_sender_tag], ' '.join(current_messages))
 
@@ -186,5 +201,5 @@ if __name__ == '__main__':
     data_path = sys.argv[1]
     speakers = sys.argv[2]
     speakers = speakers.split('_')
-    out_path = os.path.join(os.path.dirname(data_path), 'result.txt')
+    out_path = os.path.join(os.path.dirname(data_path), 'result_tg_cleaned.txt')
     convert_chat_to_text(data_path, out_path, speakers)
