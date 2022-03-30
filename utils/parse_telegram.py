@@ -36,7 +36,7 @@ def remove_control_characters(s):
 
 
 def clean(text):
-    filters = (clean_links, clean_emojis, clean_several_whitespaces)
+    filters = (clean_links, clean_several_whitespaces)
     for f in filters:
         text = f(text)
     if len(text) == 0:
@@ -197,9 +197,95 @@ def convert_chat_to_text(path, out_path, speakers_2):
         f.write(output)
 
 
+def convert_channel_to_text(path, out_path, speakers_2=None):
+    SPECIAL_TOKENS = {
+        'speaker_1': '<speaker1>',
+        'speaker_2': '<speaker2>',
+    }
+
+    with open(path, 'r') as f:
+        chat = json.load(f)
+
+    speaker_1_id = '<empty>'  #str(data['personal_information']['user_id'])
+
+    def get_speaker_tag(from_id, speaker_2_id):
+        from_id = str(from_id).lower()
+        if speaker_1_id in from_id:
+            return 'speaker_1'
+        elif speaker_2_id in from_id:
+            return 'speaker_2'
+        else:
+            return 'another'
+
+    def filter_links(text):
+        SPECIAL_REMOVE = ('@new_militarycolumnist', )
+        result = ''
+        if isinstance(text, str):
+            result = text
+        elif isinstance(text, list):
+            for element in text:
+                if isinstance(element, str):
+                    result += element
+                elif isinstance(element, dict):
+                    result += element.get('text', '')
+                else:
+                    result += ''
+        for sr in SPECIAL_REMOVE:
+            result = result.replace(sr, '')
+        return result
+
+    def read_message(message):
+        if isinstance(message, list):
+            result = ''
+            for m in message:
+                result += read_message(m) + ' '
+            result = result[:-1]
+        elif isinstance(message, str):
+            result = message
+        elif isinstance(message, dict):
+            result = message['text']
+        else:
+            result = ''
+        return result
+
+    def parse_date(d):
+        from dateutil import parser
+        return parser.parse(d)
+
+    output = ''
+
+    start_date = parse_date('2022-02-01T00:00:00')
+
+    speaker_2_id = 'channel' + str(chat['id'])
+    for message in tqdm(chat['messages'], total=len(chat['messages'])):
+        from_id = message.get('from_id', None)
+        date = parse_date(message['date'])
+        if date < start_date:
+            continue
+        if from_id is None:
+            continue
+        text = read_message(message['text'])
+        text = filter_links(text)
+        if len(text) == 0:
+            continue
+        sender_tag = get_speaker_tag(from_id, speaker_2_id)
+        if sender_tag != 'speaker_2':
+            continue
+        text_to_add = clean(remove_control_characters(text))
+        if len(text_to_add) == 0:
+            continue
+        text_to_add = ' '.join([SPECIAL_TOKENS[sender_tag], text_to_add + '\n'])
+        output += text_to_add
+
+    with open(out_path, 'w') as f:
+        f.write(output)
+
+
+
 if __name__ == '__main__':
     data_path = sys.argv[1]
     speakers = sys.argv[2]
     speakers = speakers.split('_')
     out_path = os.path.join(os.path.dirname(data_path), 'result_tg_cleaned.txt')
-    convert_chat_to_text(data_path, out_path, speakers)
+    #convert_chat_to_text(data_path, out_path, speakers)
+    convert_channel_to_text(data_path, out_path)

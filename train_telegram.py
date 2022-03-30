@@ -47,32 +47,37 @@ def sample(model, tokenizer, max_history=2, no_info=True, max_generation_steps=1
     speaker2_tag = '<speaker2>'
     speaker1_tag_id = tokenizer.convert_tokens_to_ids(speaker1_tag)
     speaker2_tag_id = tokenizer.convert_tokens_to_ids(speaker2_tag)
-    history = f"""
-    {speaker2_tag} Привет )
-    {speaker1_tag} Привет, чё как?
-    {speaker2_tag} Нормально, сам как?
-    {speaker1_tag} Хорошо
-    {speaker2_tag} Давай поговорим?
-    {speaker1_tag} О чём хочешь поговорить?"""
-    print(history)
-    print('\n[Chat with the model! Send "h" to see the full history]\n')
-    history = history.split('\n')
+    # history = f"""
+    # {speaker2_tag} Привет )
+    # {speaker1_tag} Привет, чё как?
+    # {speaker2_tag} Нормально, сам как?
+    # {speaker1_tag} Хорошо
+    # {speaker2_tag} Давай поговорим?
+    # {speaker1_tag} О чём хочешь поговорить?"""
+    # print(history)
+    # print('\n[Chat with the model! Send "h" to see the full history]\n')
+    # history = history.split('\n')
+    history = [f"{speaker2_tag} Война на Украине.\n", f"{speaker2_tag} Спецоперация войск РФ.\n",
+               f"{speaker2_tag} Путин дал жёсткий ответ западным санкциям.\n",
+               f"{speaker2_tag} Зеленский выступил с обращением к нации.\n"]
     for i in range(max_generation_steps):
-        message = None #'О стикерах вконтакте'
-        while not message:
-            print(f'{speaker2_tag} writing...:')
-            message = input()
-            if message == 'h':
-                print('\n'.join(history))
-                message = None
-            elif message == 'quit':
-                break
-        # add new message to history
-        history.append(f'{speaker2_tag} {message}')
+        # message = None #'О стикерах вконтакте'
+        # while not message:
+        #     print(f'{speaker2_tag} writing...:')
+        #     message = input()
+        #     if message == 'h':
+        #         print('\n'.join(history))
+        #         message = None
+        #     elif message == 'quit':
+        #         break
+        # # add new message to history
+        # history.append(f'{speaker2_tag} {message}')
+        # PERSONAL CHAT END
         # keep only most recent conversation as input to the model
         recent_history = history[-(2 * max_history):]
         # concatenate history into single string and add trigger word "bot:"
         history_str = '{}\n{}'.format('\n'.join(recent_history), speaker1_tag)
+        history_str = '{}\n{}'.format('\n'.join(recent_history), speaker2_tag)
         # tokenize text and convert into vocabulary ids (input ids)
         history_enc = tokenizer.encode(history_str, add_special_tokens=True)
         with torch.no_grad():
@@ -91,7 +96,8 @@ def sample(model, tokenizer, max_history=2, no_info=True, max_generation_steps=1
         for i, out_id in enumerate(out_ids):
             if out_id in [speaker1_tag_id, speaker2_tag_id]:
                 break
-        answer = '{} {}'.format(speaker1_tag, tokenizer.decode(out_ids[:i]))
+        # answer = '{} {}'.format(speaker1_tag, tokenizer.decode(out_ids[:i]))
+        answer = '{} {}'.format(speaker2_tag, tokenizer.decode(out_ids[:i]))
         print(answer)
         # add answer to history
         history.append(answer)
