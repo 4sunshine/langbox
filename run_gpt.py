@@ -1,3 +1,4 @@
+import os
 import sys
 
 from transformers import (
@@ -10,12 +11,15 @@ from transformers import (
 )
 import torch
 from utils.sample import sample_sequence
-from bing_image_downloader import downloader
-from transliterate import translit
+from utils.web import image_download as downloader
+from translate import Translator
 import time
 
 
-def sample(model, tokenizer, initial_text, max_history=3, max_generation_steps=10, downloader=None):
+def sample(model, tokenizer, initial_text, max_history=3, max_generation_steps=10, downloader=None,
+           save_dir='runs/gpt_result', translator=None):
+    if downloader is not None:
+        os.makedirs(save_dir, exist_ok=True)
     speaker2_tag = '<speaker2>'
     speaker2_tag_id = tokenizer.convert_tokens_to_ids(speaker2_tag)
     history = []
@@ -47,11 +51,17 @@ def sample(model, tokenizer, initial_text, max_history=3, max_generation_steps=1
         decoded_string = tokenizer.decode(out_ids[:j])
         answer = '{} {}'.format(speaker2_tag, decoded_string)
         if (downloader is not None) and (i == 0):
-            timeout = 60
-            downloader.download(translit(decoded_string[:40], 'ru', reversed=True),
-                                limit=2,  output_dir='images_ret', adult_filter_off=True,
-                                force_replace=False, timeout=timeout, verbose=False)
-            time.sleep(timeout)
+            request = ' '.join(decoded_string.split(' ')[:6])
+            if translator is not None:
+                request = translator.translate(request)
+            result = downloader(request, save_dir)
+            if result is not None:
+                basename = os.path.basename(result)
+                target_name = os.path.splitext(basename)[0]
+                target_path = os.path.join(save_dir, target_name + '.txt')
+                with open(os.path.join(target_path), 'w') as f:
+                    f.write(decoded_string + '\n')
+
         # print(answer)
         # add answer to history
         history.append(answer)
@@ -64,8 +74,11 @@ def infer_channel_gpt3(checkpoint_path):
     model.eval()
     initial_strings = ['Владимир Путин', 'Вооружённые силы РФ', 'ВСУ', 'Россия', 'Украина', 'Рамзан Кадыров',
                        'Владимир Зеленский', 'Военные', 'В ходе спецоперации']
+    translator = Translator('en', 'ru', 'mymemory')
+
     for input_str in initial_strings:
-        result = sample(model, tokenizer, input_str, max_generation_steps=10, downloader=downloader)
+        result = sample(model, tokenizer, input_str, max_generation_steps=10, downloader=downloader,
+                        translator=None)
         print(result)
         print('***')
 
