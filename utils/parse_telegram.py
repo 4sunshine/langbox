@@ -18,9 +18,16 @@ import torch
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from utils.clean import clean_links, clean_emojis, clean_several_whitespaces
 import string
+import argparse
 
 logger = logging.getLogger(__file__)
 CACHE_PATH = 'cached_input_task2.txt'
+
+SPECIAL_TOKENS = {
+    'speaker_1': '<speaker1>',
+    'speaker_2': '<speaker2>',
+}
+
 
 def remove_control_characters(s):
     if not isinstance(s, str):
@@ -197,28 +204,19 @@ def convert_chat_to_text(path, out_path, speakers_2):
         f.write(output)
 
 
-def convert_channel_to_text(path, out_path, speakers_2=None):
-    SPECIAL_TOKENS = {
-        'speaker_1': '<speaker1>',
-        'speaker_2': '<speaker2>',
-    }
-
+def convert_channel_to_text(path, out_path, start_date='1980-01-01T00:00:00',
+                            special_remove=()):
     with open(path, 'r') as f:
         chat = json.load(f)
 
-    speaker_1_id = '<empty>'  #str(data['personal_information']['user_id'])
-
     def get_speaker_tag(from_id, speaker_2_id):
         from_id = str(from_id).lower()
-        if speaker_1_id in from_id:
-            return 'speaker_1'
-        elif speaker_2_id in from_id:
+        if speaker_2_id in from_id:
             return 'speaker_2'
         else:
             return 'another'
 
     def filter_links(text):
-        SPECIAL_REMOVE = ('@new_militarycolumnist', )
         result = ''
         if isinstance(text, str):
             result = text
@@ -230,7 +228,7 @@ def convert_channel_to_text(path, out_path, speakers_2=None):
                     result += element.get('text', '')
                 else:
                     result += ''
-        for sr in SPECIAL_REMOVE:
+        for sr in special_remove:
             result = result.replace(sr, '')
         return result
 
@@ -254,7 +252,7 @@ def convert_channel_to_text(path, out_path, speakers_2=None):
 
     output = ''
 
-    start_date = parse_date('2022-02-01T00:00:00')
+    start_date = parse_date(start_date)
 
     speaker_2_id = 'channel' + str(chat['id'])
     for message in tqdm(chat['messages'], total=len(chat['messages'])):
@@ -277,15 +275,30 @@ def convert_channel_to_text(path, out_path, speakers_2=None):
         text_to_add = ' '.join([SPECIAL_TOKENS[sender_tag], text_to_add + '\n'])
         output += text_to_add
 
+    cleaned_text = clean_links(output)
+    # cleaned_text = clean_emojis(cleaned_text)
+    output = clean_several_whitespaces(cleaned_text)
+
     with open(out_path, 'w') as f:
         f.write(output)
 
 
+def main():
+    parser = argparse.ArgumentParser(description='Telegram parser')
+    parser.add_argument('--data_path', type=str, help='Telegram data in JSON format', required=True)
+    parser.add_argument('--speakers', type=str, help='Speakers to parse', default=None)
+    parser.add_argument('--start_date', type=str, help='From which date parse', default='2022-02-01T00:00:00')
+    parser.add_argument('--special_remove', type=str, help='Remove strings', default='@new_militarycolumnist')
+    args = parser.parse_args()
+    out_path = os.path.basename(args.data_path)
+    basename = os.path.splitext(out_path)[0]
+    out_path = os.path.join(os.path.dirname(args.data_path), basename + '_parsed.txt')
+    if args.speakers is None:
+        convert_channel_to_text(args.data_path, out_path,
+                                start_date=args.start_date, special_remove=tuple(args.special_remove.split(';')))
+    else:
+        convert_chat_to_text(args.data_path, out_path, args.speakers)
+
 
 if __name__ == '__main__':
-    data_path = sys.argv[1]
-    speakers = sys.argv[2]
-    speakers = speakers.split('_')
-    out_path = os.path.join(os.path.dirname(data_path), 'result_tg_cleaned.txt')
-    #convert_chat_to_text(data_path, out_path, speakers)
-    convert_channel_to_text(data_path, out_path)
+    main()
