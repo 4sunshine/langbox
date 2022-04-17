@@ -80,7 +80,7 @@ def generate_codebooks(text, tokenizer, dalle, top_k, top_p, images_num, image_p
     return codebooks
 
 
-def prepare_codebooks(text, tokenizer, dalle, dalle_bs=4, seed=42):
+def prepare_codebooks(text, tokenizer, dalle, dalle_bs=4, seed=6995):
     seed_everything(seed)
     codebooks = []
     for top_k, top_p, images_num in [
@@ -108,11 +108,35 @@ def synth_images(codebooks, out_dir = 'images_output'):
         img.save(os.path.join(out_dir, f'img_{i:02d}.png'))
     return pil_images
 
+def get_sr_model(dalle, device='cuda'):
+    from rudalle import get_realesrgan
+
+    dalle = dalle.to('cpu')
+    del dalle
+    import gc
+    torch.cuda.empty_cache()
+    gc.collect()
+
+    realesrgan = get_realesrgan('x2', device=device, fp16=True)
+    return realesrgan
+
+def upsample_sr(pil_images, realesrgan):
+    from rudalle.pipelines import super_resolution
+    sr_images = super_resolution(pil_images, realesrgan, batch_size=1)
+    return sr_images
+
 
 if __name__ == '__main__':
+    output_dir = 'images_woman'
+    os.makedirs(output_dir, exist_ok=True)
     memory_check()
-    text = 'Проавпр влпоыпоып пвпыооцпкпо и аолаво'
+    text = 'Фотография идеальная женщина'
     models = get_models()
     dalle, tokenizer, vae, ruclip, ruclip_processor = models
     codebooks = prepare_codebooks(text, tokenizer, dalle)
-    images = synth_images(codebooks, 'mad_images')
+    pil_images = synth_images(codebooks, output_dir)
+    top_images, clip_scores = cherry_pick_by_clip(pil_images, text, ruclip, ruclip_processor, device='cpu', count=6)
+    realesrgan = get_sr_model(dalle)
+    sr_images = upsample_sr(top_images, realesrgan)
+    for i, img in enumerate(sr_images):
+        img.save(os.path.join(output_dir, f'img_sr_{i:02d}.png'))
