@@ -158,7 +158,10 @@ def convert_chat_to_text(path, out_path, speakers_2):
                 if isinstance(element, str):
                     result += element
                 elif isinstance(element, dict):
-                    result += element.get('text', '')
+                    type = element.get('type', None)
+                    cur_text = element.get('text', '')
+                    if type != 'link':
+                        result += cur_text #element.get('text', '')
                 else:
                     result += ''
         return result
@@ -216,21 +219,13 @@ def convert_channel_to_text(path, out_path, start_date='1980-01-01T00:00:00',
         else:
             return 'another'
 
-    def filter_links(text):
-        result = ''
-        if isinstance(text, str):
-            result = text
-        elif isinstance(text, list):
-            for element in text:
-                if isinstance(element, str):
-                    result += element
-                elif isinstance(element, dict):
-                    result += element.get('text', '')
-                else:
-                    result += ''
+    def filter_links(text, advertising=('#реклама', )):
         for sr in special_remove:
-            result = result.replace(sr, '')
-        return result
+            text = text.replace(sr, '')
+        for ad in advertising:
+            if ad in text:
+                text = ''
+        return text
 
     def read_message(message):
         if isinstance(message, list):
@@ -241,7 +236,11 @@ def convert_channel_to_text(path, out_path, start_date='1980-01-01T00:00:00',
         elif isinstance(message, str):
             result = message
         elif isinstance(message, dict):
-            result = message['text']
+            text_type = message.get('type', None)
+            if text_type != 'link':
+                result = message.get('text', '')
+            else:
+                result = ''
         else:
             result = ''
         return result
@@ -287,8 +286,8 @@ def main():
     parser = argparse.ArgumentParser(description='Telegram parser')
     parser.add_argument('--data_path', type=str, help='Telegram data in JSON format', required=True)
     parser.add_argument('--speakers', type=str, help='Speakers to parse', default=None)
-    parser.add_argument('--start_date', type=str, help='From which date parse', default='2022-02-01T00:00:00')
-    parser.add_argument('--special_remove', type=str, help='Remove strings', default='@new_militarycolumnist')
+    parser.add_argument('--start_date', type=str, help='From which date parse', default='1980-01-01T00:00:00')
+    parser.add_argument('--special_remove', type=str, help='Remove strings', default='Подробнее на N + 1')
     args = parser.parse_args()
     out_path = os.path.basename(args.data_path)
     basename = os.path.splitext(out_path)[0]

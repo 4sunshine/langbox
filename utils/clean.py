@@ -10,6 +10,7 @@ def clean_links(text):
 
 def clean_several_whitespaces(text):
     text = text.replace(" . ", " ")
+    text = text.replace(" , ", ", ")
     text = text.replace(" .", " ")
     cleaned = re.sub(" +", " ", text)
     cleaned = cleaned.replace(" \n", ".\n")

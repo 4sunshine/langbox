@@ -46,5 +46,5 @@ if __name__ == '__main__':
     if len(sys.argv) == 3:
         val_prob = float(sys.argv[2])
     else:
-        val_prob = 0.1
+        val_prob = 0.08
     split_train_val(file, val_prob)

@@ -26,6 +26,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Training params')
     parser.add_argument('--run_name', default='telegram', type=str)
     parser.add_argument('--input_file', default='chat.txt', type=str)
+    parser.add_argument('--sampling_history', default=None, type=str)
     parser.add_argument('--val_file', default=None, type=str)
     parser.add_argument('--model_type', default='gpt2', type=str)
     parser.add_argument('--save_every', default=30, type=int)
@@ -44,7 +45,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def sample(model, tokenizer, max_history=2, no_info=True, max_generation_steps=10):
+def sample(model, tokenizer, sampling_history=None, max_history=2, no_info=True, max_generation_steps=10):
     speaker1_tag = '<speaker1>'
     speaker2_tag = '<speaker2>'
     speaker1_tag_id = tokenizer.convert_tokens_to_ids(speaker1_tag)
@@ -59,9 +60,17 @@ def sample(model, tokenizer, max_history=2, no_info=True, max_generation_steps=1
     # print(history)
     # print('\n[Chat with the model! Send "h" to see the full history]\n')
     # history = history.split('\n')
-    history = [f"{speaker2_tag} Война на Украине.\n", f"{speaker2_tag} Спецоперация войск РФ.\n",
-               f"{speaker2_tag} Путин дал жёсткий ответ западным санкциям.\n",
-               f"{speaker2_tag} Зеленский выступил с обращением к нации.\n"]
+    if sampling_history is not None:
+        with open(sampling_history, 'r') as f:
+            history = f.readlines()
+    else:
+        history = [f"{speaker2_tag} Первое сообщение.\n",
+                   f"{speaker2_tag} Второе сообщение.\n",
+                   f"{speaker2_tag} Третье сообщение.\n",
+                   f"{speaker2_tag} Четвёртое сообщение.\n"]
+    # history = [f"{speaker2_tag} Война на Украине.\n", f"{speaker2_tag} Спецоперация войск РФ.\n",
+    #            f"{speaker2_tag} Путин дал жёсткий ответ западным санкциям.\n",
+    #            f"{speaker2_tag} Зеленский выступил с обращением к нации.\n"]
     for i in range(max_generation_steps):
         # message = None #'О стикерах вконтакте'
         # while not message:
@@ -223,11 +232,11 @@ def main(cfg):
                 model.zero_grad()
                 global_step += 1
                 if global_step % save_every == 0 and global_step > 0:
-                    checkpoint_prefix = "checkpoint"
-                    output_dir = os.path.join(base_output_dir, "{}-{}".format(checkpoint_prefix, global_step))
-                    if not os.path.exists(output_dir):
-                        os.makedirs(output_dir)
                     if cfg.always_save:
+                        checkpoint_prefix = "checkpoint"
+                        output_dir = os.path.join(base_output_dir, "{}-{}".format(checkpoint_prefix, global_step))
+                        if not os.path.exists(output_dir):
+                            os.makedirs(output_dir)
                         logger.info(f"Saving model checkpoint to {output_dir}")
                         model.save_pretrained(output_dir)
                         tokenizer.save_pretrained(output_dir)
@@ -237,7 +246,7 @@ def main(cfg):
 
                     model.eval()
                     print('*** START SAMPLING ***')
-                    history = sample(model, tokenizer)
+                    history = sample(model, tokenizer, cfg.sampling_history)
                     writer.add_text('Sample', history, global_step=global_step)
                     print('*** FINISH SAMPLING ***')
 
