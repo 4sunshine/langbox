@@ -90,5 +90,6 @@ def get_data_loader(tokenizer, input_file, **kwargs):
     print("Train dataset: {:,} samples".format(len(dataset)))
     print("Build dataloaders")
     train_batch_size = kwargs.get('train_batch_size', 8)
-    data_loader = DataLoader(dataset, batch_size=train_batch_size, shuffle=True)
+    shuffle = kwargs.get('shuffle', True)
+    data_loader = DataLoader(dataset, batch_size=train_batch_size, shuffle=shuffle)
     return data_loader

@@ -26,6 +26,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Training params')
     parser.add_argument('--run_name', default='telegram', type=str)
     parser.add_argument('--input_file', default='chat.txt', type=str)
+    parser.add_argument('--val_file', default=None, type=str)
     parser.add_argument('--model_type', default='gpt2', type=str)
     parser.add_argument('--save_every', default=30, type=int)
     parser.add_argument('--max_input_lenth', default=400, type=int)
@@ -39,6 +40,7 @@ def parse_args():
     parser.add_argument('--n_epochs', default=12, type=int)
     parser.add_argument('--device', default='cuda', type=str)
     parser.add_argument('--seed', default=42, type=int)
+    parser.add_argument('--always_save', default=1, type=int)
     return parser.parse_args()
 
 
@@ -104,6 +106,26 @@ def sample(model, tokenizer, max_history=2, no_info=True, max_generation_steps=1
     return '\n'.join(history)
 
 
+def validate(model, data_loader, global_step, writer, device='cuda'):
+    model.eval()
+    av_loss = 0
+    with torch.no_grad():
+        pbar = tqdm(data_loader, position=0, desc='evaluation')  # progress bar
+        for step, batch in enumerate(pbar):
+            # Skip past any already trained steps if resuming training
+            # the language model targets (labels) are the same as the input!
+            inputs, labels = (batch, batch)
+            inputs = inputs.to(device)
+            labels = labels.to(device)
+            output = model(inputs, labels=labels)
+            loss = output['loss']
+            val_loss = loss.item()
+            # Compute a running average of the loss
+            av_loss = (step * av_loss + val_loss) / (step + 1)
+    writer.add_scalar('val_loss', av_loss, global_step=global_step)
+    return av_loss
+
+
 def main(cfg):
     set_seed(cfg.seed)
     gradient_accumulation_steps = cfg.gradient_accumulation_steps
@@ -132,6 +154,10 @@ def main(cfg):
     # Get data loaders
     logger.info("Prepare datasets")
     data_loader = get_data_loader(tokenizer, cfg.input_file, train_batch_size=train_batch_size)
+    if cfg.val_file is not None:
+        val_data_loader = get_data_loader(tokenizer, cfg.val_file, shuffle=False, train_batch_size=train_batch_size)
+    else:
+        val_data_loader = None
     # Prepare optimizer and schedule (linear warmup and decay)
     no_decay = ["bias", "LayerNorm.weight"]
     optimizer_grouped_parameters = [
@@ -167,6 +193,8 @@ def main(cfg):
     model.zero_grad()
     epoch_pbar = trange(epochs_trained, int(n_epochs))  # epoch progress bar
     av_loss = 0
+    best_val_loss = 1e10
+    best_epoch = 0
     for current_epoch in epoch_pbar:
         epoch_pbar.set_description(f"Epoch [{current_epoch + 1}/{n_epochs}]")  # description of epoch progress bar
         pbar = tqdm(data_loader, position=0)  # progress bar
@@ -199,16 +227,34 @@ def main(cfg):
                     output_dir = os.path.join(base_output_dir, "{}-{}".format(checkpoint_prefix, global_step))
                     if not os.path.exists(output_dir):
                         os.makedirs(output_dir)
-                    logger.info(f"Saving model checkpoint to {output_dir}")
-                    model.save_pretrained(output_dir)
-                    tokenizer.save_pretrained(output_dir)
-                    logger.info(f"Saving optimizer and scheduler states to {output_dir}")
-                    torch.save(optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
-                    torch.save(scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
+                    if cfg.always_save:
+                        logger.info(f"Saving model checkpoint to {output_dir}")
+                        model.save_pretrained(output_dir)
+                        tokenizer.save_pretrained(output_dir)
+                        logger.info(f"Saving optimizer and scheduler states to {output_dir}")
+                        torch.save(optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
+                        torch.save(scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
 
                     model.eval()
+                    print('*** START SAMPLING ***')
                     history = sample(model, tokenizer)
                     writer.add_text('Sample', history, global_step=global_step)
+                    print('*** FINISH SAMPLING ***')
+
+                    if val_data_loader is not None:
+                        val_loss = validate(model, val_data_loader, global_step, writer, device)
+                        logger.info(f"Current val loss: {val_loss}")
+                        if val_loss < best_val_loss:
+                            best_val_loss = val_loss
+                            best_epoch = current_epoch
+                            output_dir = os.path.join(base_output_dir, 'best')
+                            if not os.path.exists(output_dir):
+                                os.makedirs(output_dir)
+                            logger.info(f"Saving best checkpoint to {output_dir}")
+                            model.save_pretrained(output_dir)
+                            tokenizer.save_pretrained(output_dir)
+
+                        logger.info(f"Current epoch: {current_epoch}. Best epoch: {best_epoch}.")
 
     # save model
     output_dir = os.path.join(base_output_dir, 'final')
