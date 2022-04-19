@@ -11,6 +11,7 @@ from transformers import (
 )
 import torch
 from utils.sample import sample_sequence
+from utils.analysis import prepare_gen_texts
 from utils.web import image_download as downloader
 from translate import Translator
 import time
@@ -65,25 +66,42 @@ def sample(model, tokenizer, initial_text, max_history=3, max_generation_steps=1
         # print(answer)
         # add answer to history
         history.append(answer)
-    return '\n'.join(history)
+    result = '\n'.join(history)
+    result = result.replace(speaker2_tag + ' ', '')
+    return result
 
 
-def infer_channel_gpt3(checkpoint_path):
+def infer_channel_gpt3(checkpoint_path, initial_strings_file):
     tokenizer = GPT2Tokenizer.from_pretrained(checkpoint_path)
     model = AutoModelWithLMHead.from_pretrained(checkpoint_path).cuda()
     model.eval()
-    initial_strings = ['Владимир Путин', 'Вооружённые силы РФ', 'ВСУ', 'Россия', 'Украина', 'Рамзан Кадыров',
-                       'Владимир Зеленский', 'Военные', 'В ходе спецоперации']
-    translator = Translator('en', 'ru', 'mymemory')
+    with open(initial_strings_file, 'r') as f:
+        initial_strings = [line.strip() for line in f.readlines()]
 
+    # translator = Translator('en', 'ru', 'mymemory')
+    print('Begin sampling')
+    output = ''
     for input_str in initial_strings:
-        result = sample(model, tokenizer, input_str, max_generation_steps=10, downloader=downloader,
+        result = sample(model, tokenizer, input_str, max_generation_steps=1, downloader=None,
                         translator=None)
+        output += result + '\n'
         print(result)
         print('***')
+
+    dirname = os.path.dirname(initial_strings_file)
+    basename = os.path.basename(initial_strings_file)
+    target_path = os.path.join(dirname, 'predict_' + basename)
+    with open(target_path, 'w') as f:
+        f.write(output)
+    return target_path
+
+
+def gpt_dalle_prepare(checkpoint_path, initial_strings_file):
+    gpt_predictions_file = infer_channel_gpt3(checkpoint_path, initial_strings_file)
+    prepared_for_dalle_file = prepare_gen_texts(gpt_predictions_file)
 
 
 if __name__ == '__main__':
     checkpoint = sys.argv[1]
-    infer_channel_gpt3(checkpoint)
-
+    sampling_file = sys.argv[2]
+    predict_path = infer_channel_gpt3(checkpoint, sampling_file)

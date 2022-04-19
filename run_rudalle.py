@@ -97,15 +97,12 @@ def prepare_codebooks(text, tokenizer, dalle, dalle_bs=4, seed=6995):
                                         bs=dalle_bs)
     return codebooks
 
-def synth_images(codebooks, out_dir = 'images_output'):
+def synth_images(codebooks):
     pil_images = []
-    os.makedirs(out_dir, exist_ok=True)
     for _codebooks in tqdm(torch.cat(codebooks).cpu()):
         with torch.no_grad():
             images = vae.decode(_codebooks.unsqueeze(0))
             pil_images += torch_tensors_to_pil_list(images)
-    for i, img in enumerate(pil_images):
-        img.save(os.path.join(out_dir, f'img_{i:02d}.png'))
     return pil_images
 
 def get_sr_model(dalle, device='cuda'):
@@ -126,6 +123,40 @@ def upsample_sr(pil_images, realesrgan):
     return sr_images
 
 
+def create_top_n_images(text, topk=6):
+    memory_check()
+    models = get_models()
+    dalle, tokenizer, vae, ruclip, ruclip_processor = models
+    codebooks = prepare_codebooks(text, tokenizer, dalle)
+    pil_images = synth_images(codebooks)
+    top_images, clip_scores = cherry_pick_by_clip(pil_images, text, ruclip, ruclip_processor, device='cpu', count=topk)
+    realesrgan = get_sr_model(dalle)
+    sr_images = upsample_sr(top_images, realesrgan)
+    return sr_images
+
+
+def generate_by_texts(text_file):
+    with open(text_file, 'r') as f:
+        texts = [line.strip() for line in f.readlines()]
+
+    dirname = os.path.dirname(text_file)
+    basename = os.path.basename(text_file)
+    basename = os.path.splitext(basename)[0]
+
+    target_dir = os.path.join(dirname, 'dalle_' + basename)
+    os.makedirs(target_dir, exist_ok=True)
+
+    for i, text in enumerate(texts):
+        print(f'Dalle generation for text {i + 1} out of {len(texts)}')
+        pil_images = create_top_n_images(text)
+        text_basename = f'text_{i:04d}'
+        with open(os.path.join(target_dir, text_basename + '.txt'), 'w') as f:
+            f.write(text)
+        for j, img in enumerate(pil_images):
+            image_basename = text_basename + f'_{j:04d}.png'
+            img.save(os.path.join(target_dir, image_basename))
+
+
 if __name__ == '__main__':
     output_dir = 'images_woman'
     os.makedirs(output_dir, exist_ok=True)
@@ -134,7 +165,7 @@ if __name__ == '__main__':
     models = get_models()
     dalle, tokenizer, vae, ruclip, ruclip_processor = models
     codebooks = prepare_codebooks(text, tokenizer, dalle)
-    pil_images = synth_images(codebooks, output_dir)
+    pil_images = synth_images(codebooks)
     top_images, clip_scores = cherry_pick_by_clip(pil_images, text, ruclip, ruclip_processor, device='cpu', count=6)
     realesrgan = get_sr_model(dalle)
     sr_images = upsample_sr(top_images, realesrgan)
