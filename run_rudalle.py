@@ -1,17 +1,22 @@
-"""CODE BASED ON: https://github.com/ai-forever/ru-dalle"""
+"""CODE HEAVILY BASED ON LOW_RESOURCE COLAB EXAMPLE FROM: https://github.com/ai-forever/ru-dalle"""
 
 import multiprocessing
 import os
+import sys
+import gc
 
 import torch
-from psutil import virtual_memory
 import transformers
 import more_itertools
-from tqdm.auto import tqdm
 
-from rudalle.pipelines import show, cherry_pick_by_clip
-from rudalle import get_rudalle_model, get_tokenizer, get_vae, get_ruclip
+from tqdm.auto import tqdm
+from psutil import virtual_memory
+
+from rudalle import get_rudalle_model, get_tokenizer, get_vae, get_ruclip, get_realesrgan
+from rudalle.pipelines import cherry_pick_by_clip, super_resolution
 from rudalle.utils import seed_everything, torch_tensors_to_pil_list
+
+ALLOWED_MEMORY = 7.5  # GPU MEMORY AVAILABLE
 
 
 def memory_check(allowed_memory=7.5):
@@ -44,8 +49,9 @@ def get_models():
     ruclip, ruclip_processor = get_ruclip('ruclip-vit-base-patch32-v5')
     return dalle, tokenizer, vae, ruclip, ruclip_processor
 
+
 def generate_codebooks(text, tokenizer, dalle, top_k, top_p, images_num, image_prompts=None, temperature=1.0, bs=8,
-                    seed=None, use_cache=True):
+                       seed=None, use_cache=True):
     vocab_size = dalle.get_param('vocab_size')
     text_seq_length = dalle.get_param('text_seq_length')
     image_seq_length = dalle.get_param('image_seq_length')
@@ -95,9 +101,11 @@ def prepare_codebooks(text, tokenizer, dalle, dalle_bs=4, seed=6995):
     ]:
         codebooks += generate_codebooks(text, tokenizer, dalle, top_k=top_k, images_num=images_num, top_p=top_p,
                                         bs=dalle_bs)
+
     return codebooks
 
-def synth_images(codebooks):
+
+def synth_images(codebooks, vae):
     pil_images = []
     for _codebooks in tqdm(torch.cat(codebooks).cpu()):
         with torch.no_grad():
@@ -105,37 +113,36 @@ def synth_images(codebooks):
             pil_images += torch_tensors_to_pil_list(images)
     return pil_images
 
-def get_sr_model(dalle, device='cuda'):
-    from rudalle import get_realesrgan
+
+def create_top_k_images(text, topk=6):
+    memory_check()
+    dalle, tokenizer, vae, ruclip, ruclip_processor = get_models()
+
+    codebooks = prepare_codebooks(text, tokenizer, dalle)
+    pil_images = synth_images(codebooks, vae)
+
+    top_images, clip_scores = cherry_pick_by_clip(pil_images, text, ruclip, ruclip_processor, device='cpu', count=topk)
 
     dalle = dalle.to('cpu')
     del dalle
-    import gc
     torch.cuda.empty_cache()
     gc.collect()
 
-    realesrgan = get_realesrgan('x2', device=device, fp16=True)
-    return realesrgan
+    realesrgan = get_realesrgan('x2', device='cuda', fp16=True)
+    sr_images = super_resolution(top_images, realesrgan, batch_size=1)
 
-def upsample_sr(pil_images, realesrgan):
-    from rudalle.pipelines import super_resolution
-    sr_images = super_resolution(pil_images, realesrgan, batch_size=1)
+    del realesrgan
+    del vae
+    del ruclip
+    del ruclip_processor
+    del tokenizer
+    torch.cuda.empty_cache()
+    gc.collect()
+
     return sr_images
 
 
-def create_top_n_images(text, topk=6):
-    memory_check()
-    models = get_models()
-    dalle, tokenizer, vae, ruclip, ruclip_processor = models
-    codebooks = prepare_codebooks(text, tokenizer, dalle)
-    pil_images = synth_images(codebooks)
-    top_images, clip_scores = cherry_pick_by_clip(pil_images, text, ruclip, ruclip_processor, device='cpu', count=topk)
-    realesrgan = get_sr_model(dalle)
-    sr_images = upsample_sr(top_images, realesrgan)
-    return sr_images
-
-
-def generate_by_texts(text_file):
+def generate_by_texts(text_file, topk=6):
     with open(text_file, 'r') as f:
         texts = [line.strip() for line in f.readlines()]
 
@@ -147,8 +154,8 @@ def generate_by_texts(text_file):
     os.makedirs(target_dir, exist_ok=True)
 
     for i, text in enumerate(texts):
-        print(f'Dalle generation for text {i + 1} out of {len(texts)}')
-        pil_images = create_top_n_images(text)
+        print(f'*** Dalle generation for text {i + 1} out of {len(texts)} ***')
+        pil_images = create_top_k_images(text, topk)
         text_basename = f'text_{i:04d}'
         with open(os.path.join(target_dir, text_basename + '.txt'), 'w') as f:
             f.write(text)
@@ -158,16 +165,5 @@ def generate_by_texts(text_file):
 
 
 if __name__ == '__main__':
-    output_dir = 'images_woman'
-    os.makedirs(output_dir, exist_ok=True)
-    memory_check()
-    text = 'Фотография идеальная женщина'
-    models = get_models()
-    dalle, tokenizer, vae, ruclip, ruclip_processor = models
-    codebooks = prepare_codebooks(text, tokenizer, dalle)
-    pil_images = synth_images(codebooks)
-    top_images, clip_scores = cherry_pick_by_clip(pil_images, text, ruclip, ruclip_processor, device='cpu', count=6)
-    realesrgan = get_sr_model(dalle)
-    sr_images = upsample_sr(top_images, realesrgan)
-    for i, img in enumerate(sr_images):
-        img.save(os.path.join(output_dir, f'img_sr_{i:02d}.png'))
+    text_file = sys.argv[1]
+    generate_by_texts(text_file)
