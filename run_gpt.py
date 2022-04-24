@@ -1,15 +1,8 @@
 import os
-import sys
-
-from transformers import (
-    AdamW,
-    GPT2LMHeadModel,
-    GPT2Tokenizer,
-    OpenAIGPTLMHeadModel,
-    OpenAIGPTTokenizer,
-    get_linear_schedule_with_warmup, AutoModelWithLMHead, AutoTokenizer
-)
+import fire
 import torch
+
+from transformers import GPT2Tokenizer, AutoModelWithLMHead
 from utils.sample import sample_sequence
 from utils.analysis import prepare_gen_texts
 from utils.web import image_download as downloader
@@ -96,12 +89,11 @@ def infer_channel_gpt3(checkpoint_path, initial_strings_file):
     return target_path
 
 
-def gpt_dalle_prepare(checkpoint_path, initial_strings_file):
+def gpt_dalle_prepare(checkpoint_path, initial_strings_file, paraphraser=None):
     gpt_predictions_file = infer_channel_gpt3(checkpoint_path, initial_strings_file)
-    prepared_for_dalle_file = prepare_gen_texts(gpt_predictions_file)
+    prepared_for_dalle_file = prepare_gen_texts(gpt_predictions_file, paraphraser=paraphraser)
+    return prepared_for_dalle_file
 
 
 if __name__ == '__main__':
-    checkpoint = sys.argv[1]
-    sampling_file = sys.argv[2]
-    predict_path = infer_channel_gpt3(checkpoint, sampling_file)
+    prepared_for_dalle = fire.Fire(gpt_dalle_prepare)

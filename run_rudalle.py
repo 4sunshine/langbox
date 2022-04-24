@@ -2,9 +2,7 @@
 
 import multiprocessing
 import os
-import sys
 import gc
-
 import torch
 import transformers
 import more_itertools
@@ -40,24 +38,24 @@ def memory_check(allowed_memory=7.5):
 
 
 def get_models(rudalle_name='Malevich', device='cuda', rudalle_path='', tokenizer_path=None):
-    if os.path.exists(rudalle_path):
+    if rudalle_path is not None:
         dalle = get_rudalle_model(rudalle_name, pretrained=True, fp16=True, device=device,
                                   cache_dir=rudalle_path)
     else:
         dalle = get_rudalle_model(rudalle_name, pretrained=True, fp16=True, device=device)
     tokenizer = get_tokenizer(tokenizer_path)
-    if os.path.exists(rudalle_path):
+    if rudalle_path is not None:
         vae = get_vae(dwt=True, cache_dir=rudalle_path)
     else:
         vae = get_vae(dwt=True)
     # prepare utils:
     clip_device = 'cpu'
-    if os.path.exists(rudalle_path):
+    if rudalle_path is not None:
         clip, processor = ruclip.load('ruclip-vit-base-patch32-384', device=clip_device, cache_dir=rudalle_path)
     else:
         clip, processor = ruclip.load('ruclip-vit-base-patch32-384', device=clip_device)
     clip_predictor = ruclip.Predictor(clip, processor, clip_device, bs=8)
-    # ruclip, ruclip_processor = get_ruclip('ruclip-vit-base-patch32-v5')
+
     return dalle, tokenizer, vae, clip_predictor
 
 
@@ -104,11 +102,11 @@ def prepare_codebooks(text, tokenizer, dalle, dalle_bs=4, seed=6995):
         (2048, 0.995, 8),
         (1536, 0.99, 8),
         (1024, 0.99, 8),
-        # (1024, 0.98, 8),
-        # (512, 0.97, 8),
-        # (384, 0.96, 8),
-        # (256, 0.95, 8),
-        # (128, 0.95, 8),
+        (1024, 0.98, 8),
+        (512, 0.97, 8),
+        (384, 0.96, 8),
+        (256, 0.95, 8),
+        (128, 0.95, 8),
     ]:
         codebooks += generate_codebooks(text, tokenizer, dalle, top_k=top_k, images_num=images_num, top_p=top_p,
                                         bs=dalle_bs)
@@ -155,12 +153,15 @@ def create_top_k_images(text, rudalle_name, rudalle_path, tokenizer_path, topk=6
 
 def generate_by_texts(text_file,
                       rudalle_name='Malevich',
-                      rudalle_path='',
+                      rudalle_path=None,
                       tokenizer_path=None,
                       allowed_memory=7.5,
                       topk=6):
     with open(text_file, 'r') as f:
         texts = [line.strip() for line in f.readlines()]
+
+    if rudalle_path is not None:
+        os.makedirs(rudalle_path, exist_ok=True)
 
     dirname = os.path.dirname(text_file)
     basename = os.path.basename(text_file)

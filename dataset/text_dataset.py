@@ -38,9 +38,6 @@ class TextDatasetOriginal(Dataset):
         return torch.tensor(self.examples[item])
 
 
-from itertools import groupby
-
-
 def find_last(data, values):
     return [i for i, v in enumerate(data) if v in values][-1]
 
@@ -64,8 +61,6 @@ class TextDataset(Dataset):
             # use maximum possible input block size
             block_size = tokenizer.max_len_single_sentence
         start_pos = 0
-        #for i in range(0, len(tokenized_text) - block_size + 1, block_size):  # Truncate in block of block_size
-            # Note that we are loosing the last truncated example here for the sake of simplicity (no padding)
 
         while start_pos < len(tokenized_text) - 1:
             block_of_tokens = tokenizer.build_inputs_with_special_tokens(tokenized_text[start_pos: start_pos + block_size])

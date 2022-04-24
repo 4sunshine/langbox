@@ -24,7 +24,7 @@ class RuParaphraser:
         return self.tokenizer.decode(out[0], skip_special_tokens=True)
 
 
-def pos_tagger_spacy(text, nlp_model, max_single_len=3, max_pieces=2):
+def pos_tagger_spacy(text, nlp_model, max_single_len=3, max_pieces=2, paraphraser=None):
     document = nlp_model(text)
     all_subtrees = dict()
     all_childs = dict()
@@ -55,23 +55,29 @@ def pos_tagger_spacy(text, nlp_model, max_single_len=3, max_pieces=2):
         another_names = [k for k in all_anchestors.keys()][:max_pieces]
 
     another_string = ' и '.join([' '.join(all_subtrees[name][:max_single_len]) for name in another_names[:max_pieces]])
-    another_string = ' '.join(['Фотография', another_string.lower()])
+    # another_string = ' '.join(['Фотография', another_string.lower()])
 
     another_string = re.sub(r'\s+([?.,;!"])', r'\1', another_string)
+
+    if paraphraser is not None:
+        another_string = paraphraser.paraphrase(another_string)
+        another_string = re.sub(r'\s+([?.,;!"])', r'\1', another_string)
 
     return another_string
 
 
-def prepare_gen_texts(text_file):
+def prepare_gen_texts(text_file, paraphraser=None):
     with open(text_file, 'r') as f:
         texts = [line.strip() for line in f.readlines()]
     nlp = spacy.load('ru_core_news_md')
+    if paraphraser is not None:
+        paraphraser = RuParaphraser(paraphraser)
     output = ''
     print('Extracting main tags')
     print('* * * * *')
     for text in texts:
         text = text.split('.')[0]
-        result = pos_tagger_spacy(text, nlp)
+        result = pos_tagger_spacy(text, nlp, paraphraser=paraphraser)
         output += result + '\n'
         print(result)
         print('***')
