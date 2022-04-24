@@ -3,6 +3,25 @@ import os
 import string
 import spacy
 import re
+import torch.cuda
+from transformers import T5ForConditionalGeneration, T5Tokenizer
+
+
+class RuParaphraser:
+    """https://huggingface.co/cointegrated/rut5-base-paraphraser"""
+    def __init__(self, model_path):
+        self.model = T5ForConditionalGeneration.from_pretrained(model_path)
+        self.tokenizer = T5Tokenizer.from_pretrained(model_path)
+        if torch.cuda.is_available():
+            self.model.cuda()
+        self.model.eval()
+
+    def paraphrase(self, text, beams=5, grams=4, do_sample=False):
+        x = self.tokenizer(text, return_tensors='pt', padding=True).to(self.model.device)
+        max_size = int(x.input_ids.shape[1] * 1.5 + 10)
+        out = self.model.generate(**x, encoder_no_repeat_ngram_size=grams, num_beams=beams,
+                                  max_length=max_size, do_sample=do_sample)
+        return self.tokenizer.decode(out[0], skip_special_tokens=True)
 
 
 def pos_tagger_spacy(text, nlp_model, max_single_len=3, max_pieces=2):

@@ -8,15 +8,15 @@ import gc
 import torch
 import transformers
 import more_itertools
+import fire
 
 from tqdm.auto import tqdm
 from psutil import virtual_memory
 
-from rudalle import get_rudalle_model, get_tokenizer, get_vae, get_ruclip, get_realesrgan
-from rudalle.pipelines import cherry_pick_by_clip, super_resolution
+import ruclip
+from rudalle import get_rudalle_model, get_tokenizer, get_vae, get_realesrgan
+from rudalle.pipelines import cherry_pick_by_ruclip, super_resolution
 from rudalle.utils import seed_everything, torch_tensors_to_pil_list
-
-ALLOWED_MEMORY = 7.5  # GPU MEMORY AVAILABLE
 
 
 def memory_check(allowed_memory=7.5):
@@ -39,15 +39,26 @@ def memory_check(allowed_memory=7.5):
         print('GPU part', round(k, 4))
 
 
-def get_models():
-    # prepare models:
-    device = 'cuda'
-    dalle = get_rudalle_model('Malevich', pretrained=True, fp16=True, device=device)
-    tokenizer = get_tokenizer()
-    vae = get_vae(dwt=True)
+def get_models(rudalle_name='Malevich', device='cuda', rudalle_path='', tokenizer_path=None):
+    if os.path.exists(rudalle_path):
+        dalle = get_rudalle_model(rudalle_name, pretrained=True, fp16=True, device=device,
+                                  cache_dir=rudalle_path)
+    else:
+        dalle = get_rudalle_model(rudalle_name, pretrained=True, fp16=True, device=device)
+    tokenizer = get_tokenizer(tokenizer_path)
+    if os.path.exists(rudalle_path):
+        vae = get_vae(dwt=True, cache_dir=rudalle_path)
+    else:
+        vae = get_vae(dwt=True)
     # prepare utils:
-    ruclip, ruclip_processor = get_ruclip('ruclip-vit-base-patch32-v5')
-    return dalle, tokenizer, vae, ruclip, ruclip_processor
+    clip_device = 'cpu'
+    if os.path.exists(rudalle_path):
+        clip, processor = ruclip.load('ruclip-vit-base-patch32-384', device=clip_device, cache_dir=rudalle_path)
+    else:
+        clip, processor = ruclip.load('ruclip-vit-base-patch32-384', device=clip_device)
+    clip_predictor = ruclip.Predictor(clip, processor, clip_device, bs=8)
+    # ruclip, ruclip_processor = get_ruclip('ruclip-vit-base-patch32-v5')
+    return dalle, tokenizer, vae, clip_predictor
 
 
 def generate_codebooks(text, tokenizer, dalle, top_k, top_p, images_num, image_prompts=None, temperature=1.0, bs=8,
@@ -65,7 +76,8 @@ def generate_codebooks(text, tokenizer, dalle, top_k, top_p, images_num, image_p
         with torch.no_grad():
             attention_mask = torch.tril(torch.ones((chunk_bs, 1, total_seq_length, total_seq_length), device=device))
             out = input_ids.unsqueeze(0).repeat(chunk_bs, 1).to(device)
-            has_cache = False
+
+            cache = None
             if image_prompts is not None:
                 prompts_idx, prompts = image_prompts.image_prompts_idx, image_prompts.image_prompts
                 prompts = prompts.repeat(chunk_bs, 1)
@@ -74,8 +86,7 @@ def generate_codebooks(text, tokenizer, dalle, top_k, top_p, images_num, image_p
                 if image_prompts is not None and idx in prompts_idx:
                     out = torch.cat((out, prompts[:, idx].unsqueeze(1)), dim=-1)
                 else:
-                    logits, has_cache = dalle(out, attention_mask,
-                                              has_cache=has_cache, use_cache=use_cache, return_loss=False)
+                    logits, cache = dalle(out, attention_mask, use_cache=use_cache, return_loss=False, cache=cache)
                     logits = logits[:, -1, vocab_size:]
                     logits /= temperature
                     filtered_logits = transformers.top_k_top_p_filtering(logits, top_k=top_k, top_p=top_p)
@@ -93,11 +104,11 @@ def prepare_codebooks(text, tokenizer, dalle, dalle_bs=4, seed=6995):
         (2048, 0.995, 8),
         (1536, 0.99, 8),
         (1024, 0.99, 8),
-        (1024, 0.98, 8),
-        (512, 0.97, 8),
-        (384, 0.96, 8),
-        (256, 0.95, 8),
-        (128, 0.95, 8),
+        # (1024, 0.98, 8),
+        # (512, 0.97, 8),
+        # (384, 0.96, 8),
+        # (256, 0.95, 8),
+        # (128, 0.95, 8),
     ]:
         codebooks += generate_codebooks(text, tokenizer, dalle, top_k=top_k, images_num=images_num, top_p=top_p,
                                         bs=dalle_bs)
@@ -114,14 +125,15 @@ def synth_images(codebooks, vae):
     return pil_images
 
 
-def create_top_k_images(text, topk=6):
-    memory_check()
-    dalle, tokenizer, vae, ruclip, ruclip_processor = get_models()
+def create_top_k_images(text, rudalle_name, rudalle_path, tokenizer_path, topk=6):
+    dalle, tokenizer, vae, clip_predictor = get_models(rudalle_name=rudalle_name,
+                                                       rudalle_path=rudalle_path,
+                                                       tokenizer_path=tokenizer_path)
 
     codebooks = prepare_codebooks(text, tokenizer, dalle)
     pil_images = synth_images(codebooks, vae)
 
-    top_images, clip_scores = cherry_pick_by_clip(pil_images, text, ruclip, ruclip_processor, device='cpu', count=topk)
+    top_images, clip_scores = cherry_pick_by_ruclip(pil_images, text, clip_predictor, count=topk)
 
     dalle = dalle.to('cpu')
     del dalle
@@ -133,8 +145,7 @@ def create_top_k_images(text, topk=6):
 
     del realesrgan
     del vae
-    del ruclip
-    del ruclip_processor
+    del clip_predictor
     del tokenizer
     torch.cuda.empty_cache()
     gc.collect()
@@ -142,7 +153,12 @@ def create_top_k_images(text, topk=6):
     return sr_images
 
 
-def generate_by_texts(text_file, topk=6):
+def generate_by_texts(text_file,
+                      rudalle_name='Malevich',
+                      rudalle_path='',
+                      tokenizer_path=None,
+                      allowed_memory=7.5,
+                      topk=6):
     with open(text_file, 'r') as f:
         texts = [line.strip() for line in f.readlines()]
 
@@ -155,7 +171,8 @@ def generate_by_texts(text_file, topk=6):
 
     for i, text in enumerate(texts):
         print(f'*** Dalle generation for text {i + 1} out of {len(texts)} ***')
-        pil_images = create_top_k_images(text, topk)
+        memory_check(allowed_memory=allowed_memory)
+        pil_images = create_top_k_images(text, rudalle_name, rudalle_path, tokenizer_path, topk)
         text_basename = f'text_{i:04d}'
         with open(os.path.join(target_dir, text_basename + '.txt'), 'w') as f:
             f.write(text)
@@ -165,5 +182,4 @@ def generate_by_texts(text_file, topk=6):
 
 
 if __name__ == '__main__':
-    text_file = sys.argv[1]
-    generate_by_texts(text_file)
+    fire.Fire(generate_by_texts)
