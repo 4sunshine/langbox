@@ -26,6 +26,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Training params')
     parser.add_argument('--run_name', default='telegram', type=str)
     parser.add_argument('--input_file', default='chat.txt', type=str)
+    parser.add_argument('--sample_file', default='chat.txt', type=str)
     parser.add_argument('--sampling_history', default=None, type=str)
     parser.add_argument('--val_file', default=None, type=str)
     parser.add_argument('--model_type', default='gpt2', type=str)
@@ -115,6 +116,23 @@ def sample(model, tokenizer, sampling_history=None, max_history=2, no_info=True,
     return '\n'.join(history)
 
 
+def message_sample(model, tokenizer, sample_file, speaker2_tag='<speaker2>'):
+    with open(sample_file, 'r') as f:
+        beginnings = [' '.join([speaker2_tag, line.strip()]) for line in f.readlines()]
+    history = []
+    for beginning in beginnings:
+        # tokenize text and convert into vocabulary ids (input ids)
+        history_enc = tokenizer.encode(beginning, add_special_tokens=True)
+        with torch.no_grad():
+            out_ids = sample_sequence(history_enc, model)
+        out_ids = out_ids.tolist()[0]
+        answer = tokenizer.decode(out_ids)  #'{} {}'.format(speaker2_tag, tokenizer.decode(out_ids))
+        print(answer)
+        # add answer to history
+        history.append(answer)
+    return '\n'.join(history)
+
+
 def validate(model, data_loader, global_step, writer, device='cuda'):
     model.eval()
     av_loss = 0
@@ -126,6 +144,7 @@ def validate(model, data_loader, global_step, writer, device='cuda'):
             inputs, labels = (batch, batch)
             inputs = inputs.to(device)
             labels = labels.to(device)
+            labels[labels == 0] = -100
             output = model(inputs, labels=labels)
             loss = output['loss']
             val_loss = loss.item()
@@ -217,6 +236,7 @@ def main(cfg):
             inputs, labels = (batch, batch)
             inputs = inputs.to(device)
             labels = labels.to(device)
+            labels[labels == 0] = -100  # IGNORE INDEX
             output = model(inputs, labels=labels)
             loss, logits, past_key_values = output['loss'], output['logits'], output['past_key_values']
             loss.backward()
@@ -246,7 +266,8 @@ def main(cfg):
 
                     model.eval()
                     print('*** START SAMPLING ***')
-                    history = sample(model, tokenizer, cfg.sampling_history)
+                    # history = sample(model, tokenizer, cfg.sampling_history)
+                    history = message_sample(model, tokenizer, cfg.sample_file)
                     writer.add_text('Sample', history, global_step=global_step)
                     print('*** FINISH SAMPLING ***')
 
