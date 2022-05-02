@@ -90,15 +90,9 @@ class MessageDataset(Dataset):
         # load the text data generated from before into memory
         max_input_length = kwargs.get('max_input_length', 400)
         text = read_lines(input_file)
-        # tokenize the whole file
         # generate training examples by cutting the text into blocks of size max_input_length
-        self.examples = [tokenizer.encode(message) + [2] for message in text]
-        self.examples = [ex[:max_input_length] for ex in self.examples]
-        # </s> - 2nd token in dict
-        # self.examples = [tokenizer.build_inputs_with_special_tokens(
-        #     tokenizer.convert_tokens_to_ids(tokenizer.tokenize(' '.join([message, '</s>'.encode('utf-8').decode('utf-8')]))))[:max_input_length]
-        #                  for message in text]
-        # self.pad = 0
+        self.examples = [tokenizer.encode(message) for message in text]
+        self.examples = [ex[:max_input_length - 1] + [tokenizer.eos_token_id] for ex in self.examples]
 
     def __len__(self):
         return len(self.examples)
@@ -107,19 +101,22 @@ class MessageDataset(Dataset):
         return torch.tensor(self.examples[item])
 
 
-def pad_max_len(data):
+def pad_max_len(data, pad_token_id=0):
     lengths = [len(d) for d in data]
     max_len = max(lengths)
-    data = torch.stack([torch.cat([d, d.new_zeros(max_len - d.size(0))], 0) for d in data])
+    data = torch.stack([torch.cat([d, d.new_zeros(max_len - d.size(0))], pad_token_id) for d in data])
     return data
 
 
-def get_data_loader(tokenizer, input_file, **kwargs):
+def get_data_loader(tokenizer, input_file, mode='message', **kwargs):
     """ Prepare the dataset for training and evaluation """
-    dataset = MessageDataset(input_file, tokenizer, **kwargs)
-    print("Train dataset: {:,} samples".format(len(dataset)))
-    print("Build dataloaders")
-    train_batch_size = kwargs.get('train_batch_size', 8)
+    if mode == 'message':
+        dataset, collate_fn = MessageDataset(input_file, tokenizer, **kwargs), pad_max_len
+    else:
+        dataset, collate_fn = TextDataset(input_file, tokenizer, **kwargs), None
+    print(f"Dataset has: {len(dataset)} samples")
+    print("Building dataloader")
+    batch_size = kwargs.get('batch_size', 8)
     shuffle = kwargs.get('shuffle', True)
-    data_loader = DataLoader(dataset, batch_size=train_batch_size, shuffle=shuffle, collate_fn=pad_max_len)
+    data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=collate_fn)
     return data_loader
