@@ -1,10 +1,10 @@
 import os
-import fire
 import torch
 
 from transformers import GPT2Tokenizer, AutoModelWithLMHead
-from utils.sample import sample_sequence
-from utils.analysis import prepare_gen_texts
+from fire import Fire
+from utils.sample import sample_sequence, message_sample
+from utils.analysis import prepare_gen_texts_key
 from utils.web import image_download as downloader
 from translate import Translator
 import time
@@ -64,22 +64,26 @@ def sample(model, tokenizer, initial_text, max_history=3, max_generation_steps=1
     return result
 
 
-def infer_channel_gpt3(checkpoint_path, initial_strings_file):
+def infer_channel_gpt3(checkpoint_path, initial_strings_file, message_mode=False):
     tokenizer = GPT2Tokenizer.from_pretrained(checkpoint_path)
     model = AutoModelWithLMHead.from_pretrained(checkpoint_path).cuda()
     model.eval()
-    with open(initial_strings_file, 'r') as f:
-        initial_strings = [line.strip() for line in f.readlines()]
-
-    # translator = Translator('en', 'ru', 'mymemory')
     print('Begin sampling')
-    output = ''
-    for input_str in initial_strings:
-        result = sample(model, tokenizer, input_str, max_generation_steps=1, downloader=None,
-                        translator=None)
-        output += result + '\n'
-        print(result)
-        print('***')
+    if message_mode:
+        output = message_sample(model, tokenizer, initial_strings_file)
+    else:
+        with open(initial_strings_file, 'r') as f:
+            initial_strings = [line.strip() for line in f.readlines()]
+
+        # translator = Translator('en', 'ru', 'mymemory')
+        output = ''
+        for input_str in initial_strings:
+            result = sample(model, tokenizer, input_str, max_generation_steps=1, downloader=None,
+                            translator=None)
+            output += result + '\n'
+
+    print(output)
+    print('Sampling finished')
 
     dirname = os.path.dirname(initial_strings_file)
     basename = os.path.basename(initial_strings_file)
@@ -89,11 +93,11 @@ def infer_channel_gpt3(checkpoint_path, initial_strings_file):
     return target_path
 
 
-def gpt_dalle_prepare(checkpoint_path, initial_strings_file, paraphraser=None):
-    gpt_predictions_file = infer_channel_gpt3(checkpoint_path, initial_strings_file)
-    prepared_for_dalle_file = prepare_gen_texts(gpt_predictions_file, paraphraser=paraphraser)
+def gpt_dalle_prepare(checkpoint_path, initial_strings_file, message_mode=True, paraphraser=None):
+    gpt_predictions_file = infer_channel_gpt3(checkpoint_path, initial_strings_file, message_mode)
+    prepared_for_dalle_file = prepare_gen_texts_key(gpt_predictions_file, paraphraser=paraphraser)
     return prepared_for_dalle_file
 
 
 if __name__ == '__main__':
-    prepared_for_dalle = fire.Fire(gpt_dalle_prepare)
+    prepared_for_dalle = Fire(gpt_dalle_prepare)

@@ -19,6 +19,9 @@ def set_seed(seed):
 
 def add_special_tokens_(model, tokenizer):
     """ Add special tokens to the tokenizer and the model if they have not already been added. """
+    tokenizer.eos_token = '</s>'
+    tokenizer.pad_token = '<pad>'
+    tokenizer.bos_token = '<s>'
     orig_num_tokens = len(tokenizer.encoder)
     num_added_tokens = tokenizer.add_special_tokens(ATTR_TO_SPECIAL_TOKEN) # doesn't add if they are already there
     if num_added_tokens > 0:
