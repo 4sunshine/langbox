@@ -1,4 +1,5 @@
 import torch
+import transformers
 from tqdm import tqdm, trange
 import argparse
 from transformers import (
@@ -6,13 +7,14 @@ from transformers import (
     GPT2Tokenizer,
     get_linear_schedule_with_warmup, AutoModelWithLMHead,
 )
-
+from torch.optim import Adam
 from dataset.utils import set_seed, add_special_tokens_
 from dataset.text_dataset import get_data_loader
 from utils.sample import sample, message_sample
 import logging
 import tensorboardX
 import os
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 # set up logging
 logger = logging.getLogger(__name__)
@@ -85,6 +87,8 @@ def main(cfg):
     optimizer = AdamW(optimizer_grouped_parameters, lr=cfg.lr, eps=cfg.adam_epsilon)
     t_total = len(data_loader) // gradient_accumulation_steps * n_epochs
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=cfg.warmup_steps, num_training_steps=t_total)
+    # scheduler = transformers.get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=cfg.warmup_steps,
+    #                                                          num_training_steps=t_total)
 
     logger.info("***** Running training *****")
     global_step = 0
