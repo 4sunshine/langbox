@@ -6,12 +6,16 @@ import fire
 
 from PIL import Image, ImageDraw, ImageFont
 
+DEFAULT_FONT_SIZE = 32
+
 
 def get_font_size_for_target_size(text, target_size,
-                                  font='NotoSansJP-Medium.otf', font_size=32, spacing=2):
+                                  font='NotoSansJP-Medium.otf', font_size=32, spacing=2.):
+    if font_size is None:
+        font_size = DEFAULT_FONT_SIZE
     texts = text.splitlines()
     if not texts:
-        return 32
+        return font_size
     fnt = ImageFont.truetype(font, size=font_size, layout_engine=ImageFont.LAYOUT_RAQM)
     heights, widths = [], []
     for text in texts:
@@ -47,47 +51,60 @@ def draw_side_text(target_size, text, heights, font, side_margin=0,
 def draw_text_image(target_size, text,
                     font='NotoSansJP-Medium.otf',
                     text_color='#FFFFFF', background_color='#cc0000',
-                    text_back_color='#00000000', spacing=0.1,
+                    text_back_color='#00000000', spacing=0.1, side_margin=10,
+                    text_part=1,
                     font_size=None):
-
-    if font_size is None:
-        font_size, total_height, h0 = get_font_size_for_target_size(text, target_size, font, font_size=32,
-                                                                    spacing=spacing)
+    w, h = target_size
+    w -= 2 * side_margin
+    text_target_size = (w, h)
+    font_size, total_height, h0 = get_font_size_for_target_size(text, text_target_size, font, font_size=font_size,
+                                                                spacing=spacing)
     # TODO: SUPPORT FIXED FONT SIZE
     font = ImageFont.truetype(font, font_size)
     ascent, descent = font.getmetrics()
     w, h = target_size
 
-    # t_draw.line((0, h / 2, w, h / 2), fill='#abb2b9')
     y_0 = int(round((h - total_height) * 0.5 + ascent))
     heights = [y_0]
     y = heights[0]
     for t in text.splitlines():
         w_t, h_t = font.getsize(t)
-        # (width, baseline), (offset_x, offset_y) = font.font.getsize(t)
         y += h_t + spacing * h_t
         heights.append(y)
 
     # for i in range(1, len(text) + 1):
     #     cur_text = text[:i]
     #     print(cur_text)
+    if text_part < 1:
+        text_len = int(round(text_part * len(text)))
+        text = text[:text_len]
     img = draw_side_text(target_size, text, heights[:-1], font,
-                         text_color=text_color, background_color=background_color)
+                         text_color=text_color, background_color=background_color, side_margin=side_margin)
     return img
 
 
-def wrap_text(text, target_size, coeff=4.8):
+def wrap_text(text, target_size, coeff=4.8, filter_map=None, append='*'):
+    if filter_map is not None:
+        """MANUALLY REMOVE VIOLENT CONTENT"""
+        for k, v in filter_map.items():
+            text = text.replace(k, v)
     total_len = len(text)
     w, h = target_size
     n_wrap = int(round(sqrt(coeff * w * total_len / h)))
     text = textwrap.wrap(text, n_wrap)
-    return '\n'.join(text)
+    return '\n'.join(text) + append
 
 
 def prepare_news_images(prediction_file,
                         dalle_images_path,
                         news_size=(1024, 256),
-                        font='Lora-Regular.ttf'):
+                        font='Lora-Regular.ttf',
+                        lower_text='* Не является достоверной информацией. Сгенерировано нейросетью.',
+                        ):
+    filter_map = {
+        'погибли': 'пострадали',
+    }
+
     with open(prediction_file, 'r') as f:
         texts = [line.strip() for line in f.readlines()]
     basename = os.path.splitext(os.path.basename(prediction_file))[0]
@@ -99,16 +116,28 @@ def prepare_news_images(prediction_file,
     imgs_per_text = len(images) // len(texts)
     for i, text in enumerate(tqdm(texts, total=len(texts))):
         cur_images = images[i * imgs_per_text: (i + 1) * imgs_per_text]
-        text = wrap_text(text, news_size)
+        text = wrap_text(text, news_size, filter_map=filter_map)
         text_img = draw_text_image(news_size, text, font)
         pil_images = [Image.open(img) for img in cur_images]
+
         for img, path in zip(pil_images, cur_images):
             w, h = img.size
             t_w, t_h = news_size
-            target_w, target_h = max(w, t_w), h + t_h
+            target_w, target_h = max(w, t_w), h + t_h // 2
+
+            if lower_text:
+                lower_text_size = (t_w, t_h // 4)
+                target_h += lower_text_size[1]
+                lower_text_img = draw_text_image(lower_text_size, lower_text, font, background_color='#ff9e00',
+                                                 text_color='#000000')
+
             result_img = Image.new('RGBA', (target_w, target_h))
             result_img.paste(img, (0, 0))
-            result_img.paste(text_img, (0, h), mask=text_img)
+            result_img.paste(text_img, (0, h - t_h // 2), mask=text_img)
+
+            if lower_text:
+                result_img.paste(lower_text_img, (0, target_h - lower_text_size[1]), mask=lower_text_img)
+
             basename = os.path.basename(path)
             result_img.save(os.path.join(target_dir, basename))
 
