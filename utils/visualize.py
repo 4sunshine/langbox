@@ -7,6 +7,9 @@ import fire
 from PIL import Image, ImageDraw, ImageFont
 
 DEFAULT_FONT_SIZE = 32
+FILTER_MAP = {
+    'погибли': 'пострадали',
+}
 
 
 def get_font_size_for_target_size(text, target_size,
@@ -52,7 +55,7 @@ def draw_text_image(target_size, text,
                     font='NotoSansJP-Medium.otf',
                     text_color='#FFFFFF', background_color='#cc0000',
                     text_back_color='#00000000', spacing=0.1, side_margin=10,
-                    text_part=1,
+                    text_part=1.,
                     font_size=None):
     w, h = target_size
     w -= 2 * side_margin
@@ -72,9 +75,6 @@ def draw_text_image(target_size, text,
         y += h_t + spacing * h_t
         heights.append(y)
 
-    # for i in range(1, len(text) + 1):
-    #     cur_text = text[:i]
-    #     print(cur_text)
     if text_part < 1:
         text_len = int(round(text_part * len(text)))
         text = text[:text_len]
@@ -101,10 +101,6 @@ def prepare_news_images(prediction_file,
                         font='Lora-Regular.ttf',
                         lower_text='* Не является достоверной информацией. Сгенерировано нейросетью.',
                         ):
-    filter_map = {
-        'погибли': 'пострадали',
-    }
-
     with open(prediction_file, 'r') as f:
         texts = [line.strip() for line in f.readlines()]
     basename = os.path.splitext(os.path.basename(prediction_file))[0]
@@ -116,7 +112,7 @@ def prepare_news_images(prediction_file,
     imgs_per_text = len(images) // len(texts)
     for i, text in enumerate(tqdm(texts, total=len(texts))):
         cur_images = images[i * imgs_per_text: (i + 1) * imgs_per_text]
-        text = wrap_text(text, news_size, filter_map=filter_map)
+        text = wrap_text(text, news_size, filter_map=FILTER_MAP)
         text_img = draw_text_image(news_size, text, font)
         pil_images = [Image.open(img) for img in cur_images]
 
@@ -142,5 +138,118 @@ def prepare_news_images(prediction_file,
             result_img.save(os.path.join(target_dir, basename))
 
 
+def prepare_news_animation(prediction_file,
+                           dalle_images_path,
+                           news_size=(1024, 256),
+                           font='Lora-Regular.ttf',
+                           lower_text='* Не является достоверной информацией. Сгенерировано нейросетью.',
+                           fps=60,
+                           news_duration=5,
+                           text_birth_duration=3,
+                           transition_duration=0.1,
+                           background_image=None,
+                           overlay_image=None,
+                           ):
+
+    total_frames = int(fps * news_duration)
+    text_birth_frames = int(fps * text_birth_duration)
+    transition_frames = int(fps * transition_duration)
+
+    with open(prediction_file, 'r') as f:
+        texts = [line.strip() for line in f.readlines()]
+    basename = os.path.splitext(os.path.basename(prediction_file))[0]
+    target_dir = os.path.dirname(prediction_file)
+    target_dir = os.path.join(target_dir, 'animation_' + basename)
+    os.makedirs(target_dir, exist_ok=True)
+    images = os.listdir(dalle_images_path)
+    images = sorted([os.path.join(dalle_images_path, img) for img in images if img.endswith('g')])
+    imgs_per_text = len(images) // len(texts)
+
+    if background_image is not None:
+        background_image = Image.open(background_image)
+
+    if overlay_image is not None:
+        overlay_image = Image.open(overlay_image)
+
+    for i, text in enumerate(tqdm(texts, total=len(texts))):
+        cur_images = images[i * imgs_per_text: (i + 1) * imgs_per_text]
+        text = wrap_text(text, news_size, filter_map=FILTER_MAP)
+        pil_images = [Image.open(img) for img in cur_images]
+
+        prev_blend = None
+        next_blend = pil_images[1] if len(pil_images) > 1 else None
+
+        frames_per_image = int(total_frames / len(pil_images))
+
+        prev_img_index = 0
+        for t in tqdm(range(290, total_frames)):
+            image_index = int(t / frames_per_image)
+            img = pil_images[image_index]
+
+            if prev_img_index != image_index:
+                prev_img_index = image_index
+                prev_blend = pil_images[max(image_index - 1, 0)]
+                next_blend = pil_images[min(image_index + 1, len(pil_images) - 1)]
+
+            transition_start_fraction = (t % frames_per_image) / transition_frames
+            transition_end_fraction = (((image_index + 1) * frames_per_image - t) % frames_per_image) / transition_frames
+            if transition_start_fraction < 1:
+                blend_img = prev_blend
+                alpha = 0.5 * (1 - transition_start_fraction)
+            elif transition_end_fraction < 1:
+                blend_img = next_blend
+                alpha = 0.5 * (1 - transition_end_fraction)
+            else:
+                blend_img = None
+                alpha = 0
+
+            if blend_img is not None:
+                final_img = Image.blend(img, blend_img, alpha=alpha)
+            else:
+                final_img = img
+
+            text_part = t / text_birth_frames
+            text_img = draw_text_image(news_size, text, font, text_part=text_part)
+
+            w, h = img.size
+            t_w, t_h = news_size
+            target_w, target_h = max(w, t_w), h + t_h // 2
+
+            if lower_text:
+                lower_text_size = (t_w, t_h // 4)
+                target_h += lower_text_size[1]
+                lower_text_img = draw_text_image(lower_text_size, lower_text, font, background_color='#ff9e00',
+                                                 text_color='#000000')
+
+            result_img = Image.new('RGBA', (target_w, target_h))
+            result_img.paste(final_img, (0, 0))
+            result_img.paste(text_img, (0, h - t_h // 2), mask=text_img)
+
+            if lower_text:
+                result_img.paste(lower_text_img, (0, target_h - lower_text_size[1]), mask=lower_text_img)
+
+            if background_image is not None:
+                bw, bh = background_image.size
+                final = background_image.copy()
+                final.paste(result_img, (int((bw - target_w) / 2), int((bh - target_h) / 2)))
+
+                if overlay_image is not None:
+                    if (transition_start_fraction < 1) and (image_index == 0):
+                        r, g, b, a = overlay_image.split()
+                        a = a.point(lambda x: x * (1 - transition_start_fraction))
+                        overlay_image_copy = Image.merge('RGBA', [r, g, b, a])
+                        final = Image.alpha_composite(final, overlay_image_copy)
+                    elif (transition_end_fraction < 1) and (image_index == (len(pil_images) - 1)):
+                        r, g, b, a = overlay_image.split()
+                        a = a.point(lambda x: x * (1. - transition_end_fraction))
+                        overlay_image_copy = Image.merge('RGBA', [r, g, b, a])
+                        final = Image.alpha_composite(final, overlay_image_copy)
+                result_img = final
+
+            basename = f'item_{i:04d}_{t:05d}.png'
+            result_img.save(os.path.join(target_dir, basename))
+
+
 if __name__ == '__main__':
-    fire.Fire(prepare_news_images)
+    fire.Fire(prepare_news_animation)
+    # fire.Fire(prepare_news_images)
