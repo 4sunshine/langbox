@@ -7,6 +7,8 @@ import fire
 from PIL import Image, ImageDraw, ImageFont
 
 DEFAULT_FONT_SIZE = 32
+NEWS_HEAD_SIZE = (768, 256)
+DALLE_IMAGE_SIDE = 1024
 FILTER_MAP = {
     'погибли': 'пострадали',
 }
@@ -146,9 +148,11 @@ def prepare_news_animation(prediction_file,
                            fps=60,
                            news_duration=5,
                            text_birth_duration=3,
-                           transition_duration=0.1,
+                           transition_duration=0.15,
                            background_image=None,
                            overlay_image=None,
+                           news_head=None,
+                           news_head_font=None
                            ):
 
     total_frames = int(fps * news_duration)
@@ -167,9 +171,34 @@ def prepare_news_animation(prediction_file,
 
     if background_image is not None:
         background_image = Image.open(background_image)
+        bw, bh = background_image.size
 
-    if overlay_image is not None:
-        overlay_image = Image.open(overlay_image)
+        if overlay_image is not None:
+            overlay_image = Image.open(overlay_image)
+
+        if news_head is not None:
+            with open(news_head, 'r') as f:
+                news_head_text = f.read()
+
+            start_position = (int((bw - DALLE_IMAGE_SIDE) / 2), int((bh - NEWS_HEAD_SIZE[1]) / 3))
+
+            for i in range(fps):
+                news_head_img = draw_text_image(NEWS_HEAD_SIZE, news_head_text, news_head_font,
+                                                text_part=min(2 * i / fps, 1))
+
+                delta = max(2 * i / fps - 1, 0)
+                paste_position = (int(start_position[0] + 20 * delta), int(start_position[1] + 20 * 1.5 * delta))
+
+                news_head_final = background_image.copy()
+                news_head_final.paste(news_head_img, paste_position)
+
+                if delta > 0:
+                    r, g, b, a = overlay_image.split()
+                    a = a.point(lambda x: x * delta)
+                    overlay_image_copy = Image.merge('RGBA', [r, g, b, a])
+                    news_head_final = Image.alpha_composite(news_head_final, overlay_image_copy)
+
+                news_head_final.save(os.path.join(target_dir, f'head_{i:04d}.png'))
 
     for i, text in enumerate(tqdm(texts, total=len(texts))):
         cur_images = images[i * imgs_per_text: (i + 1) * imgs_per_text]
@@ -182,7 +211,7 @@ def prepare_news_animation(prediction_file,
         frames_per_image = int(total_frames / len(pil_images))
 
         prev_img_index = 0
-        for t in tqdm(range(290, total_frames)):
+        for t in tqdm(range(total_frames)):
             image_index = int(t / frames_per_image)
             img = pil_images[image_index]
 
@@ -229,7 +258,6 @@ def prepare_news_animation(prediction_file,
                 result_img.paste(lower_text_img, (0, target_h - lower_text_size[1]), mask=lower_text_img)
 
             if background_image is not None:
-                bw, bh = background_image.size
                 final = background_image.copy()
                 final.paste(result_img, (int((bw - target_w) / 2), int((bh - target_h) / 2)))
 
@@ -239,7 +267,8 @@ def prepare_news_animation(prediction_file,
                         a = a.point(lambda x: x * (1 - transition_start_fraction))
                         overlay_image_copy = Image.merge('RGBA', [r, g, b, a])
                         final = Image.alpha_composite(final, overlay_image_copy)
-                    elif (transition_end_fraction < 1) and (image_index == (len(pil_images) - 1)):
+                    elif (transition_end_fraction < 1) and (image_index == (len(pil_images) - 1))\
+                            and (transition_start_fraction > 1):
                         r, g, b, a = overlay_image.split()
                         a = a.point(lambda x: x * (1. - transition_end_fraction))
                         overlay_image_copy = Image.merge('RGBA', [r, g, b, a])
