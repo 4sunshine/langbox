@@ -37,7 +37,7 @@ python run_gpt.py /PATH/TO/BEST_OR_FINAL/CHECKPOINT /PATH/TO/sample.txt /PATH/TO
 ```
 Where `sample.txt` is the beginnings file in format from previous step.
 This script also performs keyword extraction from generated text to use it as input to DALL-e model.
-I use paraphraser to make extracted texts more natural.  
+I used a paraphraser to make extracted texts more natural.  
 As a result there will be two files generated: `predict_sample.txt` with "fake news" and `generation_predict_sample.txt` with extracted keywords.  
 #### Examples: 
 predict_sample.txt:  
@@ -60,6 +60,13 @@ python run_rudalle.py /PATH/TO/generation_predict_sample.txt --rudalle_path /PAT
 This script will do inference of rudalle model, sort generated pictures with ru-clip model, apply x2 resolution & store 
 top-clip-score generated pictures in folder `dalle_generation_predict_sample`. Inference tested on cuda-11.4 and
 NVIDIA RTX2070 Super with 8 Gb VRAM.  
+
+8. Visualize generated news with a script:
+```
+python utils/visualize.py /PATH/TO/generation_predict_sample.txt /PATH/TO/RUDALLE_IMAGES_FOLDER font=/PATH/TO/TTF.ttf
+```
+You also need to download a true type font for text visualization.
+
 
 ### References
 Project code mainly based on:  
