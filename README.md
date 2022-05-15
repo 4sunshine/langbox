@@ -63,12 +63,12 @@ NVIDIA RTX2070 Super with 8 Gb VRAM.
 
 8. Visualize generated news with a script:
 ```
-python utils/visualize.py /PATH/TO/generation_predict_sample.txt /PATH/TO/RUDALLE_IMAGES_FOLDER font=/PATH/TO/TTF.ttf
+python utils/visualize.py /PATH/TO/predict_sample.txt /PATH/TO/RUDALLE_IMAGES_FOLDER font=/PATH/TO/TTF.ttf
 ```
 You also need to download a true type font for text visualization.
 
 
-### References
+### Acknowledgements
 Project code mainly based on:  
 - [Meet your Artificial Self: Generate text that sounds like you](https://github.com/mar-muel/artificial-self-AMLD-2020)  
 - [Malevich-3.5GB-vRAM-usage.ipynb](https://colab.research.google.com/drive/1AoolDYePUpPkRCKIu0cP9zV7lX5QGD3Z)

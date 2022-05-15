@@ -3,11 +3,13 @@ from tqdm import tqdm
 import os
 import textwrap
 import fire
+import json
 
 from PIL import Image, ImageDraw, ImageFont
 
 DEFAULT_FONT_SIZE = 32
 NEWS_HEAD_SIZE = (768, 256)
+TEXT_SIZE = (1024, 1024)
 DALLE_IMAGE_SIDE = 1024
 FILTER_MAP = {
     'погибли': 'пострадали',
@@ -39,7 +41,7 @@ def get_font_size_for_target_size(text, target_size,
 
 def draw_side_text(target_size, text, heights, font, side_margin=0,
                    text_color='#00ff00', background_color='#00000000', anchor='ls',
-                   text_back_color='#00000000'):
+                   text_back_color='#00000000', logo_map=None):
     img = Image.new('RGBA', target_size, color=background_color)
     t_draw = ImageDraw.Draw(img)
 
@@ -48,7 +50,26 @@ def draw_side_text(target_size, text, heights, font, side_margin=0,
     for i, t in enumerate(texts):
         y = heights[i]
         x = side_margin
-        t_draw.text((x, y), t, anchor=anchor, fill=text_color, font=font)
+
+        cur_text_color = text_color
+
+        if logo_map is not None:
+            for k, v in logo_map.items():
+                if k in t:
+                    t = t.replace(k, '')
+                    if k == '^':
+                        cur_text_color = '#ffd21e'
+                    elif k == '%':
+                        cur_text_color = '#da2724'
+                    ascent, descent = font.getmetrics()
+                    (width, baseline), (offset_x, offset_y) = font.font.getsize(t)
+                    target_logo_side = ascent - offset_y
+                    logo = Image.open(v).convert('RGBA')
+                    logo.thumbnail((target_logo_side, target_logo_side), Image.ANTIALIAS)
+                    img.paste(logo, (x, int(y - target_logo_side)), mask=logo)
+                    x += target_logo_side
+                    break
+        t_draw.text((x, y), t, anchor=anchor, fill=cur_text_color, font=font)
 
     return img
 
@@ -56,9 +77,10 @@ def draw_side_text(target_size, text, heights, font, side_margin=0,
 def draw_text_image(target_size, text,
                     font='NotoSansJP-Medium.otf',
                     text_color='#FFFFFF', background_color='#cc0000',
-                    text_back_color='#00000000', spacing=0.1, side_margin=10,
+                    spacing=0.1, side_margin=10,
                     text_part=1.,
-                    font_size=None):
+                    font_size=None,
+                    logo_map=None):
     w, h = target_size
     w -= 2 * side_margin
     text_target_size = (w, h)
@@ -81,7 +103,8 @@ def draw_text_image(target_size, text,
         text_len = int(round(text_part * len(text)))
         text = text[:text_len]
     img = draw_side_text(target_size, text, heights[:-1], font,
-                         text_color=text_color, background_color=background_color, side_margin=side_margin)
+                         text_color=text_color, background_color=background_color, side_margin=side_margin,
+                         logo_map=logo_map)
     return img
 
 
@@ -186,8 +209,10 @@ def prepare_news_animation(prediction_file,
                 news_head_img = draw_text_image(NEWS_HEAD_SIZE, news_head_text, news_head_font,
                                                 text_part=min(2 * i / fps, 1))
 
+                k_coeff = 20
                 delta = max(2 * i / fps - 1, 0)
-                paste_position = (int(start_position[0] + 20 * delta), int(start_position[1] + 20 * 1.5 * delta))
+                paste_position = (int(start_position[0] + k_coeff * delta),
+                                  int(start_position[1] + k_coeff * 1.5 * delta))
 
                 news_head_final = background_image.copy()
                 news_head_final.paste(news_head_img, paste_position)
@@ -279,6 +304,60 @@ def prepare_news_animation(prediction_file,
             result_img.save(os.path.join(target_dir, basename))
 
 
+def animate_text(text_file,
+                 font='NotoSansJP-Medium.otf',
+                 background_color='#000000',
+                 text_color='#FFFFFF',
+                 target_size=(1080, 1920),
+                 fps=60,
+                 duration=2,
+                 birth=1,
+                 wrap=False,
+                 logo_map=None):
+    total_frames = fps * duration
+    birth_frames = fps * birth
+
+    with open(text_file, 'r') as f:
+        text = f.read()
+    if wrap:
+        text = wrap_text(text, TEXT_SIZE, append='')
+
+    if logo_map is not None:
+        with open(logo_map, 'r') as f:
+            logo_map = json.load(f)
+
+    basename = os.path.splitext(os.path.basename(text_file))[0]
+    target_dir = os.path.dirname(text_file)
+    target_dir = os.path.join(target_dir, 'animation_' + basename)
+    os.makedirs(target_dir, exist_ok=True)
+
+    background_image = Image.new('RGBA', target_size, background_color)
+    bw, bh = background_image.size
+
+    for i in range(total_frames):
+        text_img = draw_text_image(TEXT_SIZE, text, font, text_color=text_color, background_color=background_color,
+                                   text_part=min(i / birth_frames, 1), logo_map=logo_map)
+
+        paste_position = (int((bw - TEXT_SIZE[0]) / 2), int((bh - TEXT_SIZE[1]) / 2))
+
+        news_head_final = background_image.copy()
+        news_head_final.paste(text_img, paste_position)
+
+        news_head_final.save(os.path.join(target_dir, f'text_{i:04d}.png'))
+
+
+def convert_rgba_to_rgb(folder):
+    all_files = os.listdir(folder)
+    all_files = [f for f in all_files if f.endswith('.png')]
+    target_dir = os.path.join(os.path.dirname(folder), 'rgb_' + os.path.basename(folder))
+    os.makedirs(target_dir, exist_ok=True)
+    for f in tqdm(all_files, total=len(all_files)):
+        img = Image.open(os.path.join(folder, f)).convert('RGB')
+        img.save(os.path.join(target_dir, f))
+
+
 if __name__ == '__main__':
-    fire.Fire(prepare_news_animation)
-    # fire.Fire(prepare_news_images)
+    fire.Fire(prepare_news_images)
+    # fire.Fire(convert_rgba_to_rgb)
+    # fire.Fire(animate_text)
+    # fire.Fire(prepare_news_animation)
