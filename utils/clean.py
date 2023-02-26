@@ -18,7 +18,7 @@ def clean_several_whitespaces(text):
     return cleaned
 
 
-def clean_emojis(text):
+def clean_emojis(text, substitute_with=':) '):
     emoj = re.compile("["
         u"\U0001F600-\U0001F64F"  # emoticons
         u"\U0001F300-\U0001F5FF"  # symbols & pictographs
@@ -39,7 +39,7 @@ def clean_emojis(text):
         u"\ufe0f"  # dingbats
         u"\u3030"
                       "]+", re.UNICODE)
-    return re.sub(emoj, ':) ', text)
+    return re.sub(emoj, substitute_with, text)
 
 
 if __name__ == '__main__':
