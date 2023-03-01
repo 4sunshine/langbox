@@ -10,6 +10,8 @@ from wordcloud import WordCloud
 from nltk.tokenize import word_tokenize
 from collections import defaultdict
 import spacy
+import random
+
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from utils.clean import clean_emojis, clean_several_whitespaces
@@ -20,7 +22,7 @@ def get_target(term='ru', opt_exclude=None):
     ua_keywords = {"украина", "украину", "украины", "украинск", "украиной", "укро", "украинск", "украинц", "украи", "украинский"}
     us_keywords = {"сша", "америк", "штаты америки", "штатов америк"}
     target_keywords = {'', }
-    exclude = {'', }
+    exclude = set()
     if term == 'ru':
         target_keywords = ru_keywords
         if not opt_exclude:
@@ -250,7 +252,10 @@ def analyze_lemmas_dataset(ds, russian_sentiment_dict_path):
 
     def filter_keywords(lm):
         text = ' '.join([l[0] for l in lm])
-        return any([tw in text for tw in TARGET_KEYWORDS]) and not any([tw in text for tw in ADD_TO_EXCLUSION])
+        if not OPT_EXCLUDE:
+            return any([tw in text for tw in TARGET_KEYWORDS]) and not any([tw in text for tw in ADD_TO_EXCLUSION])
+        else:
+            return any([tw in text for tw in TARGET_KEYWORDS])
 
     if TARGET_KEYWORDS:
         lemmas = list(filter(filter_keywords, lemmas))
@@ -341,7 +346,10 @@ def analyze_lemmas_dataset(ds, russian_sentiment_dict_path):
     #print(f'Most attention frequent 100:', attention_freq[-100:])
     attention_freq = {k: float(v) for k, v in attention_freq}
 
-    mean_sentiment = calculate_mean_sentiment(frequencies, term2encoded)
+    if len(frequencies.keys()) > 0:
+        mean_sentiment = calculate_mean_sentiment(frequencies, term2encoded)
+    else:
+        mean_sentiment = 0
 
     def relative_dict(source_dict):
         sum_vals = sum([source_dict[k] for k in source_dict])
@@ -355,7 +363,7 @@ def analyze_lemmas_dataset(ds, russian_sentiment_dict_path):
     positive_words = relative_dict(dict(positive_words))
     extra_emotion = relative_dict(dict(extra_emotion))
 
-    # print(f'mean_sentiment {mean_sentiment}')
+    print(f'mean_sentiment {mean_sentiment}')
     # print(f'sentiment: {sentiment}')
     # print(f'soft sentiment: {soft_sentiment}')
     # print(f'at least one negative {negative_words}')
@@ -379,9 +387,8 @@ def analyze_lemmas_dataset(ds, russian_sentiment_dict_path):
 
     FULL_RESULT.append(result)
 
-    import random
-    def grey_color_func(word, font_size, position, orientation, random_state=None,
-                        **kwargs):
+
+    def general_color_func(word, font_size, position, orientation, random_state=None, **kwargs):
         if word not in term2encoded:
             return f"hsl(216, {random.randint(80, 100)}%, {random.randint(50, 80)}%)"
         encode = term2encoded[word]
@@ -392,28 +399,50 @@ def analyze_lemmas_dataset(ds, russian_sentiment_dict_path):
         else:
             return f"hsl(149, {random.randint(80, 100)}%, {random.randint(50, 80)}%)"
 
+    def negative_color_func(word, font_size, position, orientation, random_state=None, **kwargs):
+        return f"hsl({random.randint(0, 20)}, {random.randint(60, 95)}%, {random.randint(50, 80)}%)"  # 350
+
+    def positive_color_func(word, font_size, position, orientation, random_state=None, **kwargs):
+        return f"hsl({random.randint(110, 153)}, {random.randint(60, 95)}%, {random.randint(50, 80)}%)"
+
     frequencies_sorted = {k: float(v) for k, v in sorted(frequencies.items(), key=lambda x: x[1], reverse=True)[:MAX_WORDS]}
 
-    wordcloud = WordCloud(max_words=MAX_WORDS, width=540, height=480).generate_from_frequencies(frequencies_sorted)
-    wordcloud.recolor(color_func=grey_color_func, random_state=3)
+    if len(frequencies.keys()) == 0:
+        return
+
+    wordcloud = WordCloud(max_words=MAX_WORDS, width=1040, height=480).generate_from_frequencies(frequencies_sorted)
+    wordcloud.recolor(color_func=general_color_func, random_state=3)
 
     image = wordcloud.to_image()
-    image.save(target_name + "_wcloud.png")
+
+    image_dirname = os.path.join(os.path.dirname(ds), os.path.splitext(ds)[0] + "_wcloud")
+    os.makedirs(image_dirname, exist_ok=True)
+    image_basename = os.path.basename(target_name)
+    image_path = os.path.join(image_dirname, image_basename + ".png")
+    image.save(image_path)
 
     # wordcloud = WordCloud(max_words=300).generate_from_frequencies(attention_freq)
     # image = wordcloud.to_image()
     # # image.show()
     # image.save(target_name + "_wcloud_attend.png")
 
-    # wordcloud = WordCloud(max_words=300).generate_from_frequencies(negative_items)
-    # image = wordcloud.to_image()
-    # # image.show()
-    # image.save(target_name + "_wcloud_negative.png")
-    #
-    # wordcloud = WordCloud(max_words=300).generate_from_frequencies(positive_items)
-    # image = wordcloud.to_image()
-    # # image.show()
-    # image.save(target_name + "_wcloud_positive.png")
+    negative_items = {k: float(v) for k, v in sorted(negative_items.items(), key=lambda x: x[1], reverse=True)[:MAX_WORDS]}
+
+    wordcloud = WordCloud(max_words=MAX_WORDS, width=520, height=480).generate_from_frequencies(negative_items)
+    wordcloud.recolor(color_func=negative_color_func, random_state=3)
+    image = wordcloud.to_image()
+
+    image_path = os.path.join(image_dirname, image_basename + "_negative.png")
+    image.save(image_path)
+
+    positive_items = {k: float(v) for k, v in sorted(positive_items.items(), key=lambda x: x[1], reverse=True)[:MAX_WORDS]}
+
+    wordcloud = WordCloud(max_words=MAX_WORDS, width=520, height=480).generate_from_frequencies(positive_items)
+    wordcloud.recolor(color_func=positive_color_func, random_state=3)
+    image = wordcloud.to_image()
+
+    image_path = os.path.join(image_dirname, image_basename + "_positive.png")
+    image.save(image_path)
 
 
 def get_start_date(*channels):
@@ -431,8 +460,48 @@ def get_start_date(*channels):
         print(os.path.basename(channel), 'started at', date)
 
 
+def analyse_result(result):
+    with open(result, 'r') as f:
+        data = json.load(f)
+    refactor = list()
+    for d in data:
+        cur_data = dict()
+        for k, v in d.items():
+            if isinstance(v, dict):
+                prefix = ''.join([w[0] for w in k.split('_')])
+                for sk, sv in v.items():
+                    cur_data['_'.join([prefix, sk])] = sv
+            else:
+                cur_data[k] = v
+        refactor.append(cur_data)
+
+    df = pd.DataFrame(refactor)
+    df['mean_sentiment'] = df['mean_sentiment'].apply(lambda x: x * 100)
+    # df.to_excel("full_analysis.xlsx")
+    df['dataset'] = df['dataset'].apply(lambda x: os.path.basename(x))
+
+    df_extra = df[
+        ["dataset", "code", "filter_keywords", "opt_exclude", "se_extra_negative_part", "se_extra_positive_part"]]
+    df_extra = df_extra.groupby(["dataset", "code", "filter_keywords", "opt_exclude"]).mean()
+    df_extra = df_extra.round(1)
+
+    df = df.groupby(["dataset", "code", "filter_keywords", "opt_exclude"]).mean()
+    df = df.round(1)
+
+    df.to_excel("analysis.xlsx")
+
+    df_extra.to_excel("analysis_extra.xlsx")
+
+    print(df.head())
+
+
 if __name__ == "__main__":
-    datasets = list()
+    datasets = [
+        "zl.json",
+        "zn.json",
+        "rianag.json",
+        "tassag.json",
+    ]
     FULL_RESULT = list()
     MAX_WORDS = 300
 
@@ -441,7 +510,7 @@ if __name__ == "__main__":
             for OPT_EXCLUDE in (False, True):
                 for MAX_LEMMA_POSITION in (20, 30, 40):
                     for ds in datasets:
-                        TARGET_KEYWORDS, ADD_TO_EXCLUSION = get_target(CODE)
+                        TARGET_KEYWORDS, ADD_TO_EXCLUSION = get_target(CODE, OPT_EXCLUDE)
                         # MAX_LEMMA_POSITION = 40  # ~2x Twitter limit
                         if not FILTER_KEYWORDS:
                             TARGET_KEYWORDS, ADD_TO_EXCLUSION = set(), set()
@@ -453,11 +522,16 @@ if __name__ == "__main__":
                             'max_lemma_position': MAX_LEMMA_POSITION,
                             'exclusion': list(ADD_TO_EXCLUSION),
                             'opt_exclude': OPT_EXCLUDE,
+                            'dataset': os.path.splitext(ds)[0],
                         }
                         analyze_lemmas_dataset(ds, sys.argv[2])
 
-    with open('full_analysis_result.json', 'w') as f:
+    analysis_path = 'full_analysis_result.json'
+
+    with open(analysis_path, 'w') as f:
         json.dump(FULL_RESULT, f)
+
+    analyse_result(analysis_path)
 
     # gather_line_stats(sys.argv[1], sys.argv[2])
     # exit(0)
