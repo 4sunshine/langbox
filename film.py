@@ -184,16 +184,13 @@ def get_conflict_by_date(date, conflicts):
 def get_country_point(su_a3, world):
     country = world[world["SU_A3"] == su_a3]
 
-    #"SOVEREIGNT"
-    #"SU_A3"
     geometry = country["geometry"]
     c_centroid = centroid(geometry)
     coords = (c_centroid.x.item(), c_centroid.y.item())
     return coords, c_centroid, geometry
 
 
-def set_image(image, i, start_frame=0, end_frame=0):
-    #im = Image.open(image)
+def set_image(image, i):
     j = 0
     iterator = ImageSequence.Iterator(image)
     while True:
@@ -211,20 +208,20 @@ def set_image(image, i, start_frame=0, end_frame=0):
     return frame.convert("RGBA")
 
 
-def handle_ua():
-    ukr = gpd.read_file("/home/sunshine/Downloads/ukr_admbnda_sspe_20230201_shp/ukr_admbnda_sspe_20230201_SHP/ukr_admbnda_adm1_sspe_20230201.dbf")
+def parse_ua_db(ua_regions_db):
+    ua = gpd.read_file(ua_regions_db)
 
     # crimea_geom = ukr[ukr["ADM1_PCODE"] == "UA01"]["geometry"]
-    zpr_geom = ukr[ukr["ADM1_PCODE"] == "UA23"]["geometry"]
-    lnr_geom = ukr[ukr["ADM1_PCODE"] == "UA44"]["geometry"]
-    khe_geom = ukr[ukr["ADM1_PCODE"] == "UA65"]["geometry"]
-    dnr_geom = ukr[ukr["ADM1_PCODE"] == "UA14"]["geometry"]
+    zpr_geom = ua[ua["ADM1_PCODE"] == "UA23"]["geometry"]
+    lnr_geom = ua[ua["ADM1_PCODE"] == "UA44"]["geometry"]
+    khe_geom = ua[ua["ADM1_PCODE"] == "UA65"]["geometry"]
+    dnr_geom = ua[ua["ADM1_PCODE"] == "UA14"]["geometry"]
 
     return zpr_geom, lnr_geom, khe_geom, dnr_geom
 
 
-def world_sep_2022(world):
-    zpr_geom, lnr_geom, khe_geom, dnr_geom = handle_ua()
+def world_sep_2022(world, ua_dbf):
+    zpr_geom, lnr_geom, khe_geom, dnr_geom = parse_ua_db(ua_dbf)
     rus_geom = world[world["SU_A3"] == "RUS"]["geometry"]
 
     ukr_geom = world[world["SU_A3"] == "UKR"]["geometry"]
@@ -235,15 +232,15 @@ def world_sep_2022(world):
     ukr_series = gpd.GeoSeries(ukr_geom.iloc[0])
     rus_series = gpd.GeoSeries(rus_geom.iloc[0])
 
-    reduced_ukr_ = ukr_series.difference(rus_series)
+    mod_ua = ukr_series.difference(rus_series)
 
-    reduced_ukr = MultiPolygon([p for p in reduced_ukr_.item().geoms if p.area > 1])
+    upd_ua_b = MultiPolygon([p for p in mod_ua.item().geoms if p.area > 1])
 
-    add_to_russia = MultiPolygon([p for p in reduced_ukr_.item().geoms if p.area <= 1])
+    add_to_russia = MultiPolygon([p for p in mod_ua.item().geoms if p.area <= 1])
     rus_geom = world[world["SU_A3"] == "RUS"]["geometry"]
     merged_polys_russia = unary_union([add_to_russia, rus_geom.item()])
 
-    world.loc[world["SU_A3"] == "UKR", ["geometry"]] = reduced_ukr
+    world.loc[world["SU_A3"] == "UKR", ["geometry"]] = upd_ua_b
     world.loc[world["SU_A3"] == "RUS", ["geometry"]] = merged_polys_russia
     return world
 
@@ -275,38 +272,24 @@ def main(folder):
     shoot_is = AudioSegment.from_mp3(os.path.join(folder, sounds["shoot_is"]))
     shoot_urban = AudioSegment.from_mp3(os.path.join(folder, sounds["shoot_urban"]))
     shoot_modern = AudioSegment.from_mp3(os.path.join(folder, sounds["shoot_modern"]))
-    # silence = AudioSegment.silent(duration=10000)
-    # overlay = cry_segment.overlay(evil_segment, position=1000)
-    # play(overlay)
-    # exit(0)
 
     im_evil = Image.open(os.path.join(folder, images["evil"]))
     im_cry = Image.open(os.path.join(folder, images["cry"]))
     im_heart = Image.open(os.path.join(folder, images["heart"]))
     im_shoot = Image.open(os.path.join(folder, images["shoot"]))
 
-    world = gpd.read_file("/home/sunshine/Downloads/ne_110m_admin_0_countries/ne_110m_admin_0_countries.dbf")
+    world_dbf = os.path.join(folder, "ne_110m_admin_0_countries/ne_110m_admin_0_countries.dbf")
+    world = gpd.read_file(world_dbf)
 
-    world_sep22 = world_sep_2022(world)
-
-    def get_world(date):
-        if date < datetime(2022, 9, 29):
-            return deepcopy(world)
-        else:
-            # print("Next world")
-            return deepcopy(world_sep22)
+    ua_dbf = os.path.join(folder, "ukr_admbnda_sspe_20230201_SHP/ukr_admbnda_adm1_sspe_20230201.dbf")
+    world_sep22 = world_sep_2022(world, ua_dbf)
 
     fig, ax = plt.subplots(dpi=300, frameon=False)
     # ax.set_aspect('equal')
-    # ax.axis("scaled")
     ax.get_xaxis().set_visible(False)
     ax.get_yaxis().set_visible(False)
-    # ax.spines['top'].set_visible(False)
-    # ax.spines['right'].set_visible(False)
-    # ax.spines['bottom'].set_visible(False)
-    # ax.spines['left'].set_visible(False)
 
-    html = "/home/sunshine/Pictures/memes/List of interstate wars since 1945 - Wikipedia.html"
+    html = os.path.join(folder, "List of interstate wars since 1945 - Wikipedia.html")
     conflicts = get_conflicts_from_table(html)
 
     prepare_audio_fn = partial(make_audio_for_conflict, evil_segment=evil_segment, cry_segment=cry_segment,
@@ -315,12 +298,6 @@ def main(folder):
     conflicts = [{**conflict, "audio": prepare_audio_fn(conflict)} for conflict in conflicts]
 
     def animate_conflict(i, num_months, side_a, side_b):
-
-        # ax.set_ylim(-50, 80)
-        # ax.set_xlim(-180, 180)
-        # world[world["SU_A3"] == side_b].plot(color='orange', ax=ax)
-        # evil_color = 'red' if i <= total_months * frames_per_month else "blue"
-        # world[world["SU_A3"] == side_a].plot(color=evil_color, ax=ax)
 
         def plotCountryPatch(axes, country_name, fcolor):
             # plot a country on the provided axes
@@ -346,9 +323,6 @@ def main(folder):
             point_coords_evil = max_position_evil
         else:
             point_coords_evil = trajectory_evil[i]
-
-        #point.plot(ax=ax, marker="o", color="red", markersize=5)
-        #point_target.plot(ax=ax, marker="o", color="red", markersize=5)
 
         is_shooting = i <= num_months * FRAMES_PER_MONTH
 
@@ -376,7 +350,7 @@ def main(folder):
 
     start_date = datetime(1991, 12, 1)
     cur_date = start_date
-    now = datetime(1993,12,1)  #datetime.now()
+    now = datetime.now()
 
     def diff_month(d1, d2):
         return (d1.year - d2.year) * 12 + d1.month - d2.month
@@ -395,14 +369,9 @@ def main(folder):
 
             ax.set_ylim(-50, 80)
             ax.set_xlim(-180, 180)
-            # ax.set_aspect(2, adjustable="box")
 
-            # world = get_world(cur_date)
-
-            # world.plot(ax=ax)
-            #
             if cur_date < datetime(2022, 9, 1):
-                world.plot(ax=ax)
+                world.plot(ax=ax, cmap="Greens")
             else:
                 world_sep22.plot(ax=ax)
 
