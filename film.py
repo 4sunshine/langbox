@@ -27,13 +27,30 @@ from functools import partial
 import subprocess
 
 
-FRAMES_PER_MONTH = 3
+FRAMES_PER_MONTH = 3 #-- TODO: 3 for release!!!!!
 FPS = 30
 EVIL_AT_TARGET_MONTHS = 1
 EVIL_AT_TARGET = EVIL_AT_TARGET_MONTHS * FRAMES_PER_MONTH
 SECONDS_PER_MONTH = round(FRAMES_PER_MONTH / FPS, 1)
-SEED = 2027
+SEED = 15266334
 random.seed(SEED)
+VERTICAL_MARGIN = 40
+LEFT_OFFSET = 1
+BACKGROUND_COLOR = "#aaffbb"
+WORLD_COLOR = "#006633"
+
+DURATIONS_TO_FORGET = 3
+MIN_MONTHS_FORGET = 36
+MAX_MONTHS_FORGET = 60
+
+AUDIO_CROSSFADE_DURAION = 1000  # ms
+
+EVIL_COLOR = '#0a0909' #'#21618c'#'navy'
+SAD_COLOR = '#ff2f2f'
+EDGE_COLOR = '#ff2f2f'
+ALPHA_COUNTRY = 0.9
+
+NOW = datetime.now()
 
 
 def calculate_ms(value_months):
@@ -42,6 +59,10 @@ def calculate_ms(value_months):
 
 def frames_to_ms(i):
     return int(round(1000 * i / FPS))
+
+
+def diff_month(d1, d2):
+    return (d1.year - d2.year) * 12 + d1.month - d2.month
 
 
 replacements = {
@@ -88,6 +109,46 @@ replacements = {
     "Tajikistan": "TJK"
 }
 
+## TODO: actually needs to be improved
+LIST_NATO = {
+    1990: ["USA", "BEL", "ITA", "LUX", "ESP", "NLD", "DEU", "GRC",
+           "ISL", "TUR", "DNK", "NOR", "GBR", "PR1", "CAN", "FRA"],
+    1999: ["POL", "CZE", "HUN"],
+    2004: ["LVA", "SVN", "EST", "LTU", "ROU", "BGR", "SVK"],
+    2009: ["HRV"],
+    2017: ["MNE"],
+    2020: ["MKD"],
+    2023: ["FIN"],
+    2024: ["SWE"],
+}
+
+
+def get_conflict_data(start, finish, side_a, side_b, index):
+    start = parser.parse(start)
+    finish = parser.parse(finish)
+
+    start = start.replace(day=1)
+    finish = finish.replace(day=1)
+
+    duration = max(diff_month(finish, start), 1)
+    forget_after_months = min(MAX_MONTHS_FORGET, max(MIN_MONTHS_FORGET, DURATIONS_TO_FORGET * duration))
+    forget_after = finish + relativedelta(months=forget_after_months)
+    total_duration = forget_after_months + duration
+
+    data = {
+        "side_a": side_a,
+        "side_b": side_b,
+        "start": start,
+        "finish": finish,
+        "num_months": duration,
+        "index": index,
+        "forget_after": forget_after,
+        "total_duration": total_duration,
+        "is_nato_a": False,
+    }
+
+    return data
+
 
 def get_conflicts_from_table(wikipage):
     try:
@@ -107,6 +168,10 @@ def get_conflicts_from_table(wikipage):
         finish = row["Finish"].to_string().split("\n")[:1][0]
         finish = finish.strip().replace("Finish", "").strip()
 
+        is_nato_a = False
+        if "nato" in offense.lower():
+            is_nato_a = True
+
         offense = offense.split("\xa0")
         offense = [of.strip() for of in offense if "..." not in of]
         defence = defence.split("\xa0")
@@ -114,20 +179,6 @@ def get_conflicts_from_table(wikipage):
         #
         if finish.lower() == "ongoing":
             finish = "1 January 2025"
-
-        start = parser.parse(start).replace(day=1)
-        finish = parser.parse(finish).replace(day=1)
-        duration = max(int(round((finish - start) / timedelta(days=30))), 1)
-
-        DURATIONS_TO_FORGET = 3
-        MIN_MONTHS_FORGET = 36
-        MAX_MONTHS_FORGET = 60
-
-        forget_after_months = min(MAX_MONTHS_FORGET, max(MIN_MONTHS_FORGET, DURATIONS_TO_FORGET * duration))
-
-        forget_after = finish + relativedelta(months=forget_after_months)
-
-        total_duration = forget_after_months + duration
 
         side_a = offense[0]
         side_b = defence[0]
@@ -138,16 +189,35 @@ def get_conflicts_from_table(wikipage):
             if side_b.strip() == rep:
                 side_b = replacements[rep]
 
-        data = {
-            "side_a": side_a,
-            "side_b": side_b,
-            "start": start,
-            "finish": finish,
-            "num_months": duration,
-            "index": index,
-            "forget_after": forget_after,
-            "total_duration": total_duration,
-        }
+        if (side_a == "UKR") and (side_b == "RUS"):
+            # dividing 3 stages of conflict
+            start_1 = start
+            finish_1 = "23 February 2022"
+            start_2 = "24 February 2022"
+            finish_2 = finish
+            side_a_1 = side_a
+            side_b_1 = side_a
+            side_a_2 = side_b
+            side_b_2 = side_a
+            start_3 = "30 September 2022"
+            finish_3 = finish
+            side_a_3 = side_a
+            side_b_3 = side_b
+            data_1 = get_conflict_data(start_1, finish_1, side_a_1, side_b_1, index)
+            data_2 = get_conflict_data(start_2, finish_2, side_a_2, side_b_2, index)
+            data_3 = get_conflict_data(start_3, finish_3, side_a_3, side_b_3, index)
+            conflicts.append(data_1)
+            conflicts.append(data_2)
+            conflicts.append(data_3)
+            continue
+
+        data = get_conflict_data(start, finish, side_a, side_b, index)
+
+        if "KOS" == side_a:
+            is_nato_a = True
+
+        data["is_nato_a"] = is_nato_a
+
         conflicts.append(data)
 
     return conflicts
@@ -267,11 +337,15 @@ def main(folder):
         "shoot_modern": "shoot_modern.mp3"
     }
 
+    epochs = tuple(yy for yy in range(1990, NOW.year + 1, 10))
+
     evil_segment = AudioSegment.from_mp3(os.path.join(folder, sounds["evil"]))
     cry_segment = AudioSegment.from_mp3(os.path.join(folder, sounds["cry"]))
     shoot_is = AudioSegment.from_mp3(os.path.join(folder, sounds["shoot_is"]))
     shoot_urban = AudioSegment.from_mp3(os.path.join(folder, sounds["shoot_urban"]))
     shoot_modern = AudioSegment.from_mp3(os.path.join(folder, sounds["shoot_modern"]))
+
+    epoch_sounds = [AudioSegment.from_mp3(os.path.join(folder, str(epoch), "output.mp3")) for epoch in epochs]
 
     im_evil = Image.open(os.path.join(folder, images["evil"]))
     im_cry = Image.open(os.path.join(folder, images["cry"]))
@@ -285,9 +359,7 @@ def main(folder):
     world_sep22 = world_sep_2022(world, ua_dbf)
 
     fig, ax = plt.subplots(dpi=300, frameon=False)
-    # ax.set_aspect('equal')
-    ax.get_xaxis().set_visible(False)
-    ax.get_yaxis().set_visible(False)
+    ax.set_facecolor(BACKGROUND_COLOR)
 
     html = os.path.join(folder, "List of interstate wars since 1945 - Wikipedia.html")
     conflicts = get_conflicts_from_table(html)
@@ -297,7 +369,7 @@ def main(folder):
 
     conflicts = [{**conflict, "audio": prepare_audio_fn(conflict)} for conflict in conflicts]
 
-    def animate_conflict(i, num_months, side_a, side_b):
+    def animate_conflict(i, num_months, side_a, side_b, group_a=None):
 
         def plotCountryPatch(axes, country_name, fcolor):
             # plot a country on the provided axes
@@ -305,9 +377,11 @@ def main(folder):
             namigm = nami.__geo_interface__['features']  # geopandas's geo_interface
             namig0 = {'type': namigm[0]['geometry']['type'], \
                       'coordinates': namigm[0]['geometry']['coordinates']}
-            axes.add_patch(PolygonPatch(namig0, fc=fcolor, alpha=0.5, zorder=2))
+            axes.add_patch(PolygonPatch(namig0, fc=fcolor, alpha=ALPHA_COUNTRY,
+                                        edgecolor=EDGE_COLOR, zorder=2,
+                                        linestyle=''))
 
-        plotCountryPatch(ax, side_b, 'red')
+        plotCountryPatch(ax, side_b, SAD_COLOR)
 
         point_coords_source, point, geom = get_country_point(side_a, world)
 
@@ -327,7 +401,11 @@ def main(folder):
         is_shooting = i <= num_months * FRAMES_PER_MONTH
 
         if is_shooting:
-            plotCountryPatch(ax, side_a, 'navy')
+            if group_a is None:
+                plotCountryPatch(ax, side_a, EVIL_COLOR)
+            else:
+                for side in group_a:
+                    plotCountryPatch(ax, side, EVIL_COLOR)
             ab_shoot = add_img_to_plot(im_shoot, i, point_coords_evil, zoom=0.2)
             ax.add_artist(ab_shoot)
 
@@ -350,16 +428,37 @@ def main(folder):
 
     start_date = datetime(1991, 12, 1)
     cur_date = start_date
-    now = datetime.now()
 
-    def diff_month(d1, d2):
-        return (d1.year - d2.year) * 12 + d1.month - d2.month
-
-    max_iters_months = diff_month(now, start_date)
+    max_iters_months = diff_month(NOW, start_date)
     max_iters = max_iters_months * FRAMES_PER_MONTH
 
     audio_len_ms = calculate_ms(max_iters_months)
     base_audio = AudioSegment.silent(duration=audio_len_ms)
+
+    dur_0_mon = diff_month(datetime(epochs[1], 1, 1), start_date)
+    dur_last_mon = diff_month(NOW, datetime(epochs[-1], 1, 1))
+    dur_0_ms = calculate_ms(dur_0_mon)
+    dur_last_ms = calculate_ms(dur_last_mon)
+
+    combined = epoch_sounds[0][: dur_0_ms + AUDIO_CROSSFADE_DURAION // 2]
+    for ie in range(1, len(epochs) - 1):
+        dur_e_mon = diff_month(datetime(epochs[ie + 1], 1, 1), datetime(epochs[ie], 1, 1))
+        dur_e_ms = calculate_ms(dur_e_mon)
+        combined = combined.append(epoch_sounds[ie][:dur_e_ms + AUDIO_CROSSFADE_DURAION],
+                                   crossfade=AUDIO_CROSSFADE_DURAION)
+
+    combined = combined.append(epoch_sounds[-1][:dur_last_ms + AUDIO_CROSSFADE_DURAION // 2],
+                               crossfade=AUDIO_CROSSFADE_DURAION)
+
+    # play(combined)
+    combined.export("combined.mp3", format="mp3")
+    rest_audio = epoch_sounds[-1][dur_last_ms + AUDIO_CROSSFADE_DURAION // 2:]
+    rest_audio.export("rest_music.mp3", format="mp3")
+    base_audio = base_audio.overlay(combined, position=0)
+
+    cut_i_tl, cut_j_tl = None, None
+    cut_i_br, cut_j_br = None, None
+    background_image = None
 
     with imageio.get_writer('movie.mp4', mode='I', fps=FPS) as writer:
         for i in tqdm(range(max_iters)):
@@ -368,12 +467,12 @@ def main(folder):
             cur_conflicts = get_conflict_by_date(cur_date, conflicts)
 
             ax.set_ylim(-50, 80)
-            ax.set_xlim(-180, 180)
+            ax.set_xlim(-170, 170)
 
             if cur_date < datetime(2022, 9, 1):
-                world.plot(ax=ax, cmap="Greens")
+                world.plot(ax=ax, fc=WORLD_COLOR)#"#006400")
             else:
-                world_sep22.plot(ax=ax)
+                world_sep22.plot(ax=ax, fc=WORLD_COLOR)
 
             for conflict in cur_conflicts:
                 start_index = diff_month(conflict["start"], start_date) * FRAMES_PER_MONTH
@@ -381,8 +480,13 @@ def main(folder):
                 side_a = conflict["side_a"]
                 side_b = conflict["side_b"]
 
+                group_a = None
+                if conflict.get("is_nato_a", False):
+                    year = cur_date.year
+                    group_a = [c for y in LIST_NATO for c in LIST_NATO[y] if y <= year]
+
                 try:
-                    params = animate_conflict(i - start_index, conflict["num_months"], side_a, side_b)
+                    params = animate_conflict(i - start_index, conflict["num_months"], side_a, side_b, group_a=group_a)
                     if params["start_evil"]:
                         base_audio = base_audio.overlay(conflict["audio"], position=frames_to_ms(i))
 
@@ -392,12 +496,57 @@ def main(folder):
                     print(side_b)
                     continue
 
-            # ax.set_title(cur_date.strftime("%Y, %B"))
-            ax.text(-170, -45, cur_date.strftime("%Y, %B"), style='italic',
+            ax.text(-160, -45, cur_date.strftime("%Y, %B"), style='italic',
                     bbox={'facecolor': 'red', 'alpha': 0.5, 'pad': 0})
+
+            plt.xticks([])
+            plt.yticks([])
 
             fig.canvas.draw()
             mat = np.array(fig.canvas.renderer._renderer)
+            if i == 0:
+                print("Test image shape:", mat.shape)
+                mask_ii, mask_jj = np.where(mat[..., -1] > 0)
+                cut_i_tl = np.min(mask_ii) - VERTICAL_MARGIN
+                cut_i_br = np.max(mask_ii) + VERTICAL_MARGIN
+
+                cut_j_tl, cut_j_br = np.min(mask_jj), np.max(mask_jj)
+                width = cut_j_br - cut_j_tl
+                height = cut_i_br - cut_i_tl
+                remainder_x, remainder_y = width % 16, height % 16
+
+                # tighten x, expanding y
+                if remainder_x:
+                    width -= remainder_x
+                    cut_j_tl += remainder_x // 2
+                    cut_j_br = cut_j_tl + width
+                if remainder_y:
+                    height += 16 - remainder_y
+                    cut_i_tl -= (16 - remainder_y) // 2
+                    cut_i_br = cut_i_tl + height
+
+                print("Cutting coords initial:")
+                print(
+                    "min_i", np.min(mask_ii),
+                    "min_j", np.min(mask_jj),
+                    "max_ii", np.max(mask_ii),
+                    "max_jj", np.max(mask_jj),
+                )
+
+                mat = mat[cut_i_tl: cut_i_br, cut_j_tl: cut_j_br, ...]
+                im_test = Image.fromarray(mat)
+                im_test.save("test_img.png")
+                background_image = Image.new("RGBA", im_test.size, BACKGROUND_COLOR)
+
+            if i > 0:
+                mat = mat[cut_i_tl: cut_i_br, cut_j_tl: cut_j_br, ...]
+
+            im_render = Image.fromarray(mat)
+
+            background_image_mat = background_image.copy()
+            background_image_mat.paste(im_render, (0, 0), im_render)
+            mat = np.array(background_image_mat)
+
             writer.append_data(mat)
 
             if (i + 1) % FRAMES_PER_MONTH == 0:
