@@ -27,17 +27,20 @@ from functools import partial
 import subprocess
 
 
-FRAMES_PER_MONTH = 3 #-- TODO: 3 for release!!!!!
+FRAMES_PER_MONTH = 3
 FPS = 30
 EVIL_AT_TARGET_MONTHS = 1
 EVIL_AT_TARGET = EVIL_AT_TARGET_MONTHS * FRAMES_PER_MONTH
 SECONDS_PER_MONTH = round(FRAMES_PER_MONTH / FPS, 1)
-SEED = 15266334
+SEED = 6743
 random.seed(SEED)
 VERTICAL_MARGIN = 40
 LEFT_OFFSET = 1
 BACKGROUND_COLOR = "#aaffbb"
 WORLD_COLOR = "#006633"
+
+WORLD_COLOR_0 = "#C71585"
+BACKGROUND_COLOR_0 = "#FFB6C1"
 
 DURATIONS_TO_FORGET = 3
 MIN_MONTHS_FORGET = 36
@@ -49,6 +52,13 @@ EVIL_COLOR = '#0a0909' #'#21618c'#'navy'
 SAD_COLOR = '#ff2f2f'
 EDGE_COLOR = '#ff2f2f'
 ALPHA_COUNTRY = 0.9
+
+COMBINED_AUDIO_NAME = f"combined_{SEED}.mp3"
+MOVIE_NAME = f"movie_{SEED}.mp4"
+OUTPUT_NAME = f"output_{SEED}.mp4"
+REST_AUDIO_NAME = f"rest_music_{SEED}.mp3"
+MOVIE_SOUND = f"movie_sound_{SEED}.mp3"
+
 
 NOW = datetime.now()
 
@@ -89,6 +99,7 @@ replacements = {
     "Rwanda": "RWA",
     "Uganda": "UGA",
     "Islamic Emirate of Afghanistan": "AFG",
+    "Afghanistan": "AFG",
     "Israel": "ISR",
     "Gaza Strip": "PSX",
     "Georgia": "GEO",
@@ -106,7 +117,17 @@ replacements = {
     "North and East Syria": "SYR",
     "Armenia": "ARM",
     "Kyrgyzstan": "KGZ",
-    "Tajikistan": "TJK"
+    "Tajikistan": "TJK",
+    "Qatar": "QAT",
+    "Sweden": "SWE",
+    "United Arab Emirates": "ARE",
+    "Australia": "AUS",
+    "United Kingdom": "GBR",
+    "Canada": "CAN",
+    "Poland": "POL",
+    "France[f]": "FRA",
+    "Burundi": "BDI",
+    "Angola SPLA": "AGO",
 }
 
 ## TODO: actually needs to be improved
@@ -123,7 +144,7 @@ LIST_NATO = {
 }
 
 
-def get_conflict_data(start, finish, side_a, side_b, index):
+def get_conflict_data(start, finish, side_a, side_b, index, is_nato_a=False):
     start = parser.parse(start)
     finish = parser.parse(finish)
 
@@ -144,7 +165,7 @@ def get_conflict_data(start, finish, side_a, side_b, index):
         "index": index,
         "forget_after": forget_after,
         "total_duration": total_duration,
-        "is_nato_a": False,
+        "is_nato_a": is_nato_a,
     }
 
     return data
@@ -169,7 +190,8 @@ def get_conflicts_from_table(wikipage):
         finish = finish.strip().replace("Finish", "").strip()
 
         is_nato_a = False
-        if "nato" in offense.lower():
+
+        if ("nato" in offense.lower()) or ("kosova" in offense.lower()):
             is_nato_a = True
 
         offense = offense.split("\xa0")
@@ -181,6 +203,7 @@ def get_conflicts_from_table(wikipage):
             finish = "1 January 2025"
 
         side_a = offense[0]
+
         side_b = defence[0]
 
         for rep in replacements:
@@ -211,14 +234,29 @@ def get_conflicts_from_table(wikipage):
             conflicts.append(data_3)
             continue
 
-        data = get_conflict_data(start, finish, side_a, side_b, index)
+        if (len(offense) == 1) or ("KOS" == side_a):
 
-        if "KOS" == side_a:
-            is_nato_a = True
+            data = get_conflict_data(start, finish, side_a, side_b, index, is_nato_a=is_nato_a)
 
-        data["is_nato_a"] = is_nato_a
+            conflicts.append(data)
 
-        conflicts.append(data)
+        else:
+            result_side_a = [side_a]
+
+            for offn in offense[1:]:
+                for rep in replacements:
+                    if offn.strip() == rep:
+                        offn = replacements[rep]
+                        result_side_a.append(offn)
+                        break
+            if len(result_side_a) == 1:
+                result_side_a = side_a
+            data = get_conflict_data(start, finish, result_side_a, side_b, index, is_nato_a=is_nato_a)
+            conflicts.append(data)
+
+    for conf in conflicts:
+        print("$$$$$$$")
+        print(conf)
 
     return conflicts
 
@@ -356,10 +394,9 @@ def main(folder):
     world = gpd.read_file(world_dbf)
 
     ua_dbf = os.path.join(folder, "ukr_admbnda_sspe_20230201_SHP/ukr_admbnda_adm1_sspe_20230201.dbf")
-    world_sep22 = world_sep_2022(world, ua_dbf)
+    world_sep22 = world_sep_2022(deepcopy(world), ua_dbf)
 
     fig, ax = plt.subplots(dpi=300, frameon=False)
-    ax.set_facecolor(BACKGROUND_COLOR)
 
     html = os.path.join(folder, "List of interstate wars since 1945 - Wikipedia.html")
     conflicts = get_conflicts_from_table(html)
@@ -370,6 +407,14 @@ def main(folder):
     conflicts = [{**conflict, "audio": prepare_audio_fn(conflict)} for conflict in conflicts]
 
     def animate_conflict(i, num_months, side_a, side_b, group_a=None):
+
+        if isinstance(side_a, list):
+            if group_a is not None:
+                group_a += [csa for csa in side_a if csa not in group_a]
+            else:
+                group_a = side_a
+
+            side_a = side_a[0]
 
         def plotCountryPatch(axes, country_name, fcolor):
             # plot a country on the provided axes
@@ -451,28 +496,34 @@ def main(folder):
                                crossfade=AUDIO_CROSSFADE_DURAION)
 
     # play(combined)
-    combined.export("combined.mp3", format="mp3")
+    combined.export(COMBINED_AUDIO_NAME, format="mp3")
     rest_audio = epoch_sounds[-1][dur_last_ms + AUDIO_CROSSFADE_DURAION // 2:]
-    rest_audio.export("rest_music.mp3", format="mp3")
+    rest_audio.export(REST_AUDIO_NAME, format="mp3")
     base_audio = base_audio.overlay(combined, position=0)
 
     cut_i_tl, cut_j_tl = None, None
     cut_i_br, cut_j_br = None, None
     background_image = None
+    world_changed = False
 
-    with imageio.get_writer('movie.mp4', mode='I', fps=FPS) as writer:
-        for i in tqdm(range(max_iters)):
+    with imageio.get_writer(MOVIE_NAME, mode='I', fps=FPS) as writer:
+        for i in tqdm(range(-1, max_iters + 1)):
             ax.clear()
+            ax.set_facecolor(BACKGROUND_COLOR if i >= 0 else BACKGROUND_COLOR_0)
 
             cur_conflicts = get_conflict_by_date(cur_date, conflicts)
+
+            if (i < 0) or (i == max_iters):
+                cur_conflicts = []
 
             ax.set_ylim(-50, 80)
             ax.set_xlim(-170, 170)
 
-            if cur_date < datetime(2022, 9, 1):
-                world.plot(ax=ax, fc=WORLD_COLOR)#"#006400")
-            else:
-                world_sep22.plot(ax=ax, fc=WORLD_COLOR)
+            if cur_date >= datetime(2022, 9, 1) and not world_changed:
+                world_changed = True
+                world = deepcopy(world_sep22)
+
+            world.plot(ax=ax, fc=WORLD_COLOR if i >= 0 else WORLD_COLOR_0)
 
             for conflict in cur_conflicts:
                 start_index = diff_month(conflict["start"], start_date) * FRAMES_PER_MONTH
@@ -504,7 +555,7 @@ def main(folder):
 
             fig.canvas.draw()
             mat = np.array(fig.canvas.renderer._renderer)
-            if i == 0:
+            if i <= 0:
                 print("Test image shape:", mat.shape)
                 mask_ii, mask_jj = np.where(mat[..., -1] > 0)
                 cut_i_tl = np.min(mask_ii) - VERTICAL_MARGIN
@@ -535,8 +586,8 @@ def main(folder):
 
                 mat = mat[cut_i_tl: cut_i_br, cut_j_tl: cut_j_br, ...]
                 im_test = Image.fromarray(mat)
-                im_test.save("test_img.png")
-                background_image = Image.new("RGBA", im_test.size, BACKGROUND_COLOR)
+                im_test.save(f"test_img_{-i}.png")  # trick for negative i
+                background_image = Image.new("RGBA", im_test.size, BACKGROUND_COLOR if i >= 0 else BACKGROUND_COLOR_0)
 
             if i > 0:
                 mat = mat[cut_i_tl: cut_i_br, cut_j_tl: cut_j_br, ...]
@@ -545,21 +596,24 @@ def main(folder):
 
             background_image_mat = background_image.copy()
             background_image_mat.paste(im_render, (0, 0), im_render)
+
+            if i < 0 or i >= max_iters - 1:
+                background_image_mat.save(f"zero_image_{-i}.png")
+
             mat = np.array(background_image_mat)
 
-            writer.append_data(mat)
+            if 0 <= i < max_iters:
+                writer.append_data(mat)
 
-            if (i + 1) % FRAMES_PER_MONTH == 0:
+            if (i + 1) % FRAMES_PER_MONTH == 0 and i >= 0:
                 cur_date += relativedelta(months=1)
-            #
-            # if i >= 50:
-            #     break
 
-    base_audio.export("movie_sound.mp3", format="mp3")
+    base_audio.export(MOVIE_SOUND, format="mp3")
 
-    cmd = """ffmpeg -i movie.mp4 -i movie_sound.mp3 -c:v copy -map 0:v -map 1:a -y output.mp4"""
+    cmd = f"""ffmpeg -i {MOVIE_NAME} -i {MOVIE_SOUND} -c:v copy -map 0:v -map 1:a -y {OUTPUT_NAME}"""
     subprocess.call(cmd, shell=True)
     print('Muxing Done')
+
 
 if __name__ == "__main__":
     main(sys.argv[1])
