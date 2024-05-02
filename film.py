@@ -1024,7 +1024,7 @@ def portrait(folder):
 
     cur_religion = "Православие"
     #
-    LISTED_RELIGIONS = ["Православие", "Буддизм", "Язычество", "Ислам", "Своя вера", "Атеизм", "Католицизм", "Старообрядчество", "Прочие"]
+    LISTED_RELIGIONS = ["Православие", "Своя вера", "Атеизм", "Буддизм", "Язычество", "Ислам", "Католицизм", "Старообрядчество", "Прочие"] #"Своя вера", "Атеизм",
     result_images = []
     plt.axis("off")
     plt.tick_params(axis='both', left=False, top=False, right=False, bottom=False, labelleft=False, labeltop=False,
@@ -1066,30 +1066,56 @@ def portrait(folder):
             back_img.paste(cur_religion_img, (left, upper))
             cur_religion_img = back_img.copy()
 
-        if i > 0:
+        if i >= 3:
             anp = np.asarray(cur_alpha)
             anp_c = anp.copy()
-            anp_c[anp_c < 10] = 0
+            anp_c[anp_c < 12] = 0
+            anp_c[anp_c != 0] = 255
             contours, hierarchy = cv2.findContours(anp_c, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-            print(anp.shape)
 
-            cv2.drawContours(anp_c, contours, -1, (255,), 3)
-            #cv2.imshow("Cont", anp_c)
+            cv2.drawContours(anp_c, contours, -1, (255,), thickness=cv2.FILLED)
+            #
 
             for contour in contours:
                 smaller_img = smaller_copy.copy()
                 rect = cv2.minAreaRect(contour)
-                # b_rect = cv2.boundingRect(contour)
-                x, y, w, h = cv2.boundingRect(contour)
+
                 ((center_x, center_y), (dim_x, dim_y), angle) = rect
+                #target_points = cv2.boxPoints(rect)
+                #cv2.drawContours(anp_c, [np.intp(target_points)], -1, (255, ), 2)
+                #for i, p in enumerate(target_points):
+                #    anp_c = cv2.putText(anp_c, f"{i}. {int(angle)}", np.intp(p), cv2.FONT_HERSHEY_SIMPLEX, 1, color=(255,), thickness=2, lineType=cv2.LINE_AA)
                 # print("DXDY", dim_x, dim_y)
                 dim_x = int(round(dim_x))
                 dim_y = int(round(dim_y))
-                if dim_x <= 1 or dim_y <= 1:
+                if dim_x <= 1 or dim_y <= 1 or (dim_y * dim_x < 49):
                     continue
-                smaller_img = smaller_img.resize((dim_x, dim_y), Image.LANCZOS)
-                smaller_img = smaller_img.rotate(angle, Image.BICUBIC, expand=True, fillcolor=(255, 255, 255, 0))
-                cur_religion_img.paste(smaller_img, (x, y), smaller_img)
+                if abs(angle) < 60:
+                    smaller_img = smaller_img.resize((dim_x, dim_y), Image.LANCZOS)
+                    smaller_img = smaller_img.rotate(360-angle, Image.BICUBIC, expand=True, fillcolor=(255, 255, 255, 0))
+                else:
+                    smaller_img = smaller_img.resize((dim_y, dim_x), Image.LANCZOS)
+                    smaller_img = smaller_img.rotate(360-(90-angle), Image.BICUBIC, expand=True, fillcolor=(255, 255, 255, 0))
+                smaller_img_w, smaller_img_h = smaller_img.size
+                #print(smaller_img.size, "H", h, "W", w)
+                center_x = int(round(center_x))
+                center_y = int(round(center_y))
+                insert_at_x = center_x - smaller_img_w // 2
+                insert_at_y = center_y - smaller_img_h // 2
+                smaller_img_mask = anp_c[insert_at_y: insert_at_y + smaller_img_h, insert_at_x: insert_at_x + smaller_img_w].copy()
+
+                smaller_img_mask[smaller_img_mask != 0] = 1
+                c_alpha = smaller_img.getchannel("A").copy()
+                c_alpha = np.array(c_alpha).copy()
+                c_alpha = smaller_img_mask * c_alpha
+                c_alpha = np.uint8(c_alpha).copy()
+                c_alpha = Image.fromarray(c_alpha, "L")
+                cur_religion_img.paste(smaller_img, (insert_at_x, insert_at_y), c_alpha)
+
+            #cv2.imwrite(f"Cont_{cur_religion}.png", anp_c)
+            #cv2.waitKey(0)
+            #cv2.destroyAllWindows()
+            #exit(0)
 
         cur_religion_img.putalpha(cur_alpha)
         # after GIMP preview
