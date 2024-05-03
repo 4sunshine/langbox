@@ -1037,11 +1037,12 @@ def portrait(folder):
     BG_COLOR = "#000000ff"
     W, H = 1504, 728
     left, upper = 230, 356
+    PATCH_COLOR = "#ed9f16" #"#ff0000"
 
     for i, cur_religion in tqdm(enumerate(LISTED_RELIGIONS)):
         ax.clear()
         ax.set_facecolor("#00000000")
-        rus.apply(lambda x: plotCountryPatch(ax, x["region"], cur_religion, "#ff0000"), axis=1)
+        rus.apply(lambda x: plotCountryPatch(ax, x["region"], cur_religion, PATCH_COLOR), axis=1)
         rus.plot(ax=ax, fc="#ffffff00")
 
         fig.canvas.draw()
@@ -1065,6 +1066,23 @@ def portrait(folder):
             smaller_copy.save(cur_religion + "_resized.png")
             back_img.paste(cur_religion_img, (left, upper))
             cur_religion_img = back_img.copy()
+
+        def save_img(base_copy, postfix, alpha=None):
+
+            if alpha is not None:
+                base_copy.putalpha(alpha)
+                # after GIMP preview
+
+            unclustered_religion_img = base_copy.crop((left, upper, left + W, upper + H))
+            ###
+            unclustered_religion_img.save(cur_religion + f"_{postfix}.png")
+
+            bg_image = Image.new("RGBA", unclustered_religion_img.size, color=BG_COLOR)
+            overlay = Image.alpha_composite(bg_image, unclustered_religion_img)
+            overlay.save(cur_religion + f"_{postfix}_overlay.png")
+
+        save_img(cur_religion_img.copy(), "not_clustered", alpha=cur_alpha.copy())
+        save_img(img.copy(), "data")
 
         if i >= 3:
             anp = np.asarray(cur_alpha)
