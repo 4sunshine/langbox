@@ -80,7 +80,9 @@ def draw_text_image(target_size, text,
                     spacing=0.1, side_margin=10,
                     text_part=1.,
                     font_size=None,
-                    logo_map=None):
+                    logo_map=None,
+                    return_font_size=False,
+                    anchor="ls"):
     w, h = target_size
     w -= 2 * side_margin
     text_target_size = (w, h)
@@ -104,7 +106,9 @@ def draw_text_image(target_size, text,
         text = text[:text_len]
     img = draw_side_text(target_size, text, heights[:-1], font,
                          text_color=text_color, background_color=background_color, side_margin=side_margin,
-                         logo_map=logo_map)
+                         logo_map=logo_map, anchor=anchor)
+    if return_font_size:
+        return img, font_size
     return img
 
 

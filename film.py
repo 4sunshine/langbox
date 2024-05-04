@@ -1,9 +1,10 @@
 import json
+import pickle
 from datetime import timedelta, datetime
 import sys
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from PIL import ImageSequence
 import matplotlib.pyplot as plt
 import geopandas as gpd
@@ -1029,7 +1030,7 @@ def portrait(folder):
     plt.axis("off")
     plt.tick_params(axis='both', left=False, top=False, right=False, bottom=False, labelleft=False, labeltop=False,
                     labelright=False, labelbottom=False)
-    ax.spines['top'].set_visible(False)
+    ax.spines['top'].set_visible(False)  # ax.spines[:].set_visible(False)
     ax.spines['right'].set_visible(False)
     ax.spines['bottom'].set_visible(False)
     ax.spines['left'].set_visible(False)
@@ -1038,6 +1039,217 @@ def portrait(folder):
     W, H = 1504, 728
     left, upper = 230, 356
     PATCH_COLOR = "#ed9f16" #"#ff0000"
+
+    X_MARGIN = W // 10
+
+    INTERMEDIATE_IMG_SIZE = H // 7
+
+    color_bar_img = Image.new("RGBA", (W, H // 7), BG_COLOR)
+    bg_img = color_bar_img.copy()
+    patch_img = Image.new("RGBA", color_bar_img.size, PATCH_COLOR)
+    color_bar = np.asarray(color_bar_img.copy()).copy()
+    bar_len = W - 2 * X_MARGIN
+    bar = np.linspace(255, 0, bar_len, dtype=np.uint8)
+    y_pos = color_bar.shape[0] // 2
+    color_bar[: y_pos, X_MARGIN: X_MARGIN + bar_len, -1] = bar
+    color_bar_img = Image.fromarray(color_bar, "RGBA")
+    color_bar_img = Image.alpha_composite(patch_img, color_bar_img)
+    from utils.visualize import get_font_size_for_target_size, draw_text_image
+    text_size = (X_MARGIN, (color_bar.shape[0] - y_pos) * 9 // 10)
+    text_100, font_size = draw_text_image(text_size, "100%", "utils/fonts/sagrada/SAGRADA.otf",
+                                          background_color=BG_COLOR, side_margin=50, return_font_size=True,
+                                          anchor="ls")
+    text_0, font_size = draw_text_image(text_size, "0%", "utils/fonts/sagrada/SAGRADA.otf",
+                                          background_color=BG_COLOR, side_margin=50, return_font_size=True,
+                                          anchor="ls", font_size=font_size)
+    text_margin = y_pos // 10
+    draw = ImageDraw.Draw(color_bar_img)
+    CYRILLIC_FONT = "utils/fonts/sagrada/SAGRADA.otf"
+    fnt = ImageFont.truetype(CYRILLIC_FONT, font_size)
+    draw.text((W-X_MARGIN, y_pos + text_margin), "100", font=fnt, fill="#ffffffff", anchor="rt")
+    draw.text((X_MARGIN, y_pos + text_margin), "0", font=fnt, fill="#ffffffff", anchor="lt")
+    draw.text((W // 2, y_pos + text_margin), "% НАСЕЛЕНИЯ РЕГИОНА", font=fnt, fill="#ffffffff", anchor="mt")
+    #color_bar_img.paste(text_100, (W - X_MARGIN - text_100.size[0] // 2, y_pos), text_100)
+    #color_bar_img.paste(text_0, (X_MARGIN - text_0.size[0] // 2, y_pos), text_0)
+    # color_bar_img.show()
+
+    inter_img_religion = Image.new("RGBA", (W, INTERMEDIATE_IMG_SIZE), BG_COLOR)
+
+    symbols_margin = INTERMEDIATE_IMG_SIZE // 10
+    multiply_symbol = Image.new("RGBA", (INTERMEDIATE_IMG_SIZE-symbols_margin, INTERMEDIATE_IMG_SIZE-symbols_margin), BG_COLOR)
+    dr = ImageDraw.Draw(multiply_symbol)
+    dr.line((0, 0) + multiply_symbol.size, fill="#ffffff", width=8)
+    dr.line((0, *multiply_symbol.size[::-1], 0), fill="#ffffff", width=8)
+    base_img = Image.new("RGBA", (INTERMEDIATE_IMG_SIZE, INTERMEDIATE_IMG_SIZE), BG_COLOR)
+    base_img.paste(multiply_symbol, (symbols_margin, symbols_margin), multiply_symbol)
+    multiply_symbol = base_img
+
+    add_symbol = Image.new("RGBA", (INTERMEDIATE_IMG_SIZE-symbols_margin, INTERMEDIATE_IMG_SIZE-symbols_margin), BG_COLOR)
+    dr = ImageDraw.Draw(add_symbol)
+    dr.line((add_symbol.size[0] // 2, 0, add_symbol.size[0] // 2, add_symbol.size[1]), fill="#ffffff", width=8)
+    dr.line((0, add_symbol.size[1] // 2, add_symbol.size[0], add_symbol.size[1] // 2,), fill="#ffffff", width=8)
+    base_img = Image.new("RGBA", (INTERMEDIATE_IMG_SIZE, INTERMEDIATE_IMG_SIZE), BG_COLOR)
+    base_img.paste(add_symbol, (symbols_margin, symbols_margin), add_symbol)
+    add_symbol = base_img
+
+    equal_symbol = Image.new("RGBA", (INTERMEDIATE_IMG_SIZE, INTERMEDIATE_IMG_SIZE), BG_COLOR)
+    dr = ImageDraw.Draw(equal_symbol)
+    dr.line((0, equal_symbol.size[1] // 3, equal_symbol.size[0], equal_symbol.size[1] // 3,), fill="#ffffff", width=8)
+    dr.line((0, 2 * equal_symbol.size[1] // 3, equal_symbol.size[0], 2 * equal_symbol.size[1] // 3,), fill="#ffffff", width=8)
+
+    def x_middle_paste(base, overlay, y_pos):
+        overlay_w = overlay.size[0]
+        base_w = base.size[0]
+        x_pos = (base_w - overlay_w) // 2
+        base.paste(overlay, (x_pos, y_pos))
+        return base
+
+    def y_append(img_a, img_b):
+        wa, ha = img_a.size
+        wb, hb = img_b.size
+        base = Image.new("RGBA", (max(wa, wb), ha+hb), BG_COLOR)
+        base = x_middle_paste(base, img_a, 0)
+        base = x_middle_paste(base, img_b, ha)
+        return base
+
+    def v_concat_images(images):
+        if len(images) == 0:
+            return None
+        base = images[0]
+        for i in range(1, len(images)):
+            base = y_append(base, images[i])
+        return base
+
+    def make_religion_name_img(religion_name, font_multiplier=2):
+        rel_name_img = inter_img_religion.copy()
+        draw = ImageDraw.Draw(rel_name_img)
+        fnt = ImageFont.truetype(CYRILLIC_FONT, font_multiplier * font_size)
+        draw.text((rel_name_img.size[0] // 2, 0), religion_name.capitalize(),
+                  fill=PATCH_COLOR, font=fnt, anchor="mt")
+        return rel_name_img
+
+    color_bar_img.save("colorbar.png")
+
+    ax.clear()
+    ax.set_facecolor("#00000000")
+    # rus.apply(lambda x: plotCountryPatch(ax, x["region"], cur_religion, PATCH_COLOR), axis=1)
+    rus.plot(ax=ax, fc=PATCH_COLOR)
+
+    fig.canvas.draw()
+    mat = np.array(fig.canvas.renderer._renderer)
+    img = Image.fromarray(mat, "RGBA")
+    img = img.crop((left, upper, left + W, upper + H))
+    rus_alpha = img.getchannel("A")
+    #bg_image = Image.new("RGBA", img.size, color=BG_COLOR)
+    #overlay = Image.alpha_composite(bg_image, img)
+    #overlay.putalpha(rus_alpha)
+    #overlay.show()
+    #exit(0)
+    TARGET_BIN = os.path.join(folder, "result_religion_images.bin")
+    RELEASE_SIZE = (1080, 1920)
+    MARGINS = 20
+
+
+    if os.path.exists(TARGET_BIN):
+        with open(TARGET_BIN, "rb") as frb:
+            res_data = pickle.load(frb)
+        result = res_data.pop("result")
+        num_religions = len(list(res_data.keys()))
+        # 9 Religions
+        res_data = dict(sorted(res_data.items()))
+        others = res_data.pop("Прочие")
+        res_data["Прочие"] = others
+
+        fade_in_iters = FPS // 2
+        total_iters = 2 * FPS
+
+        part_3_queue = []
+
+        with imageio.get_writer("Religions_part_2.mp4", mode='I', fps=FPS, macro_block_size=1) as writer:
+            for cur_religion, images in res_data.items():
+                print(cur_religion)
+                cur_frame_a = v_concat_images(images[:-1])
+                cur_frame_b = v_concat_images(images[:-2] + images[-1:])
+                part_3_queue.append(images[-1].copy())
+                frames_per_intro = int(round(fade_in_iters / (len(images) - 2)))
+
+                target_size = cur_frame_a.size
+                back_img = Image.new("RGBA", target_size, BG_COLOR)
+                release_img = Image.new("RGBA", RELEASE_SIZE, BG_COLOR)
+                for i in range(total_iters):
+                    if i < fade_in_iters:
+                        total_images = i // frames_per_intro
+                        cur_frame = v_concat_images(images[:total_images])
+                        cur_base = back_img.copy()
+                        if cur_frame is not None:
+                            cur_base.paste(cur_frame, (0, 0), cur_frame)
+                        cur_base.thumbnail((RELEASE_SIZE[0]-MARGINS, RELEASE_SIZE[1]-MARGINS), Image.LANCZOS)
+                        release_img.paste(cur_base, (MARGINS, MARGINS))
+                    elif i < total_iters // 2:
+                        cur_base = cur_frame_a.copy()
+                        cur_base.thumbnail((RELEASE_SIZE[0] - MARGINS, RELEASE_SIZE[1] - MARGINS), Image.LANCZOS)
+                        release_img.paste(cur_base, (MARGINS, MARGINS))
+                    else:
+                        cur_base = cur_frame_b.copy()
+                        cur_base.thumbnail((RELEASE_SIZE[0] - MARGINS, RELEASE_SIZE[1] - MARGINS), Image.LANCZOS)
+                        release_img.paste(cur_base, (MARGINS, MARGINS))
+
+                    frame = np.array(release_img, dtype=np.uint8)
+                    writer.append_data(frame)
+
+        with imageio.get_writer("Religions_part_3.mp4", mode='I', fps=FPS, macro_block_size=1) as writer:
+            num_religions_per_frame = 3
+            for i in range(0, num_religions, num_religions_per_frame):
+                cur_rel_images = part_3_queue[i: i + num_religions_per_frame]
+                cur_queue = [add_symbol] * (num_religions // num_religions_per_frame - 1)
+                if i // num_religions_per_frame == num_religions // num_religions_per_frame - 1:
+                    cur_queue.append(equal_symbol)
+                else:
+                    cur_queue.append(add_symbol)
+                res_queue = [None] * (len(cur_queue) + len(cur_rel_images))
+                print(i, len(res_queue))
+                res_queue[::2] = cur_rel_images
+                res_queue[1::2] = cur_queue
+                cur_frame_a = v_concat_images(res_queue)
+                frames_per_intro = int(round(fade_in_iters / (len(res_queue) - 1)))
+                target_size = cur_frame_a.size
+                back_img = Image.new("RGBA", target_size, BG_COLOR)
+                release_img = Image.new("RGBA", RELEASE_SIZE, BG_COLOR)
+                for j in range(total_iters):
+                    if j < fade_in_iters:
+                        total_images = j // frames_per_intro
+                        cur_frame = v_concat_images(res_queue[:total_images])
+                        cur_base = back_img.copy()
+                        if cur_frame is not None:
+                            cur_base.paste(cur_frame, (0, 0), cur_frame)
+                        cur_base.thumbnail((RELEASE_SIZE[0]-MARGINS, RELEASE_SIZE[1]-MARGINS), Image.LANCZOS)
+                        release_img.paste(cur_base, (MARGINS, MARGINS))
+                    else:
+                        cur_base = cur_frame_a.copy()
+                        cur_base.thumbnail((RELEASE_SIZE[0] - MARGINS, RELEASE_SIZE[1] - MARGINS), Image.LANCZOS)
+                        release_img.paste(cur_base, (MARGINS, MARGINS))
+
+                    frame = np.array(release_img, dtype=np.uint8)
+                    writer.append_data(frame)
+
+            release_img = Image.new("RGBA", RELEASE_SIZE, BG_COLOR)
+            result_img = result["overlay"]
+            name_img = make_religion_name_img("ЛИК РОССИЙСКОЙ ВЕРЫ")
+            frame = v_concat_images([name_img, result_img])
+            frame.thumbnail((RELEASE_SIZE[0] - MARGINS, RELEASE_SIZE[1] - MARGINS), Image.LANCZOS)
+            release_img.paste(frame, (MARGINS, (RELEASE_SIZE[1] - frame.size[1]) // 2))
+            frame = np.array(release_img, dtype=np.uint8)
+            for k in range(2 * total_iters):
+                writer.append_data(frame)
+
+        exit(0)
+
+
+        #print(result)
+        #print(len(list(res_data.keys())))
+        return 
+
+    res_data = dict()
 
     for i, cur_religion in tqdm(enumerate(LISTED_RELIGIONS)):
         ax.clear()
@@ -1080,9 +1292,13 @@ def portrait(folder):
             bg_image = Image.new("RGBA", unclustered_religion_img.size, color=BG_COLOR)
             overlay = Image.alpha_composite(bg_image, unclustered_religion_img)
             overlay.save(cur_religion + f"_{postfix}_overlay.png")
+            overlay_rualpha = overlay.copy()
+            overlay_rualpha.putalpha(rus_alpha)
+            overlay_rualpha.save(cur_religion + f"_{postfix}_rus_alpha.png")
+            return overlay, overlay_rualpha
 
-        save_img(cur_religion_img.copy(), "not_clustered", alpha=cur_alpha.copy())
-        save_img(img.copy(), "data")
+        rel_img_nc, _ = save_img(cur_religion_img.copy(), "not_clustered", alpha=cur_alpha.copy())
+        data_img, data_rualpha_img = save_img(img.copy(), "data")
 
         if i >= 3:
             anp = np.asarray(cur_alpha)
@@ -1145,8 +1361,17 @@ def portrait(folder):
         bg_image = Image.new("RGBA", cur_religion_img.size, color=BG_COLOR)
         overlay = Image.alpha_composite(bg_image, cur_religion_img)
         overlay.save(cur_religion + "_overlay.png")
-        cur_religion_img.putalpha(255)
-        cur_religion_img.save(cur_religion + "_before.png")
+        overlay_rualpha = overlay.copy()
+        overlay_rualpha.putalpha(rus_alpha)
+        overlay_rualpha.save(cur_religion + f"_overlay_rus_alpha.png")
+        before_img = cur_religion_img.copy()
+        before_img.putalpha(255)
+        before_img.save(cur_religion + "_before.png")
+
+        religion_name_img = make_religion_name_img(cur_religion)
+        ordered_images = [religion_name_img, before_img, multiply_symbol, data_img, color_bar_img,
+                          equal_symbol, rel_img_nc, overlay]
+        res_data[cur_religion] = ordered_images
 
     base_img = result_images[0]
     result_images = deque(result_images[1:])
@@ -1155,11 +1380,20 @@ def portrait(folder):
         base_img = Image.alpha_composite(base_img, cur_img)
         print("<<POP>>")
 
+    res_data["result"] = dict()
+
     base_img.save("religions_result_transparent.png")
+    res_data["result"]["transparent"] = base_img
     bg_image = Image.new("RGBA", base_img.size, color=BG_COLOR)
     overlay = Image.alpha_composite(bg_image, base_img)
     overlay.save("religions_result_overlay.png")
-    plt.show()
+    res_data["result"]["overlay"] = overlay
+    overlay.putalpha(rus_alpha)
+    overlay.save("religions_result_overlay_rus_alpha.png")
+    res_data["result"]["rus_alpha"] = overlay
+
+    with open(TARGET_BIN, "wb") as fwb:
+        pickle.dump(res_data, fwb)
 
 
 if __name__ == "__main__":
