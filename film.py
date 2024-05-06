@@ -31,6 +31,7 @@ from collections import deque
 from difflib import get_close_matches
 from glob import glob
 import cv2
+import seaborn as sns
 
 FRAMES_PER_MONTH = 3
 FPS = 30
@@ -1104,29 +1105,41 @@ def portrait(folder):
         base.paste(overlay, (x_pos, y_pos))
         return base
 
-    def y_append(img_a, img_b):
+    def y_append(img_a, img_b, bg_color=None):
         wa, ha = img_a.size
         wb, hb = img_b.size
-        base = Image.new("RGBA", (max(wa, wb), ha+hb), BG_COLOR)
+        base = Image.new("RGBA", (max(wa, wb), ha+hb), BG_COLOR if bg_color is None else bg_color)
         base = x_middle_paste(base, img_a, 0)
         base = x_middle_paste(base, img_b, ha)
         return base
 
-    def v_concat_images(images):
+    def v_concat_images(images, bg_color=None):
         if len(images) == 0:
             return None
         base = images[0]
         for i in range(1, len(images)):
-            base = y_append(base, images[i])
+            base = y_append(base, images[i], bg_color)
         return base
 
-    def make_religion_name_img(religion_name, font_multiplier=2):
-        rel_name_img = inter_img_religion.copy()
+    def make_religion_name_img(religion_name, font_multiplier=2, b_img=None):
+        if b_img is None:
+            rel_name_img = inter_img_religion.copy()
+        else:
+            rel_name_img = b_img.copy()
         draw = ImageDraw.Draw(rel_name_img)
         fnt = ImageFont.truetype(CYRILLIC_FONT, font_multiplier * font_size)
         draw.text((rel_name_img.size[0] // 2, 0), religion_name.capitalize(),
                   fill=PATCH_COLOR, font=fnt, anchor="mt")
         return rel_name_img
+
+    def upscale_to_w(img, target_size):
+        w, h = img.size
+        tw, th = target_size
+        scale_x = tw / w
+        new_h = scale_x * h
+        new_size = (tw, int(round(new_h)))
+        img = img.resize(new_size, Image.LANCZOS)
+        return img
 
     color_bar_img.save("colorbar.png")
 
@@ -1149,11 +1162,199 @@ def portrait(folder):
     RELEASE_SIZE = (1080, 1920)
     MARGINS = 20
 
+    V_LINE = RELEASE_SIZE[0] // 15
 
     if os.path.exists(TARGET_BIN):
+        textual_frame_iters = 3 * FPS
+        textual_fade_iters = FPS // 4
+
+        def animate_textual(num_iters, fade_iters, linear_min_val, linear_max_val, fade_in=True, fade_out=True):
+            alpha_anim = np.array([255] * num_iters, dtype=np.uint8)
+            if fade_in:
+                alpha_anim[:fade_iters] = np.linspace(0, 255, fade_iters, dtype=np.uint8)
+            if fade_out:
+                alpha_anim[-fade_iters:] = np.linspace(255, 0, fade_iters, dtype=np.uint8)
+
+            v_pos = np.array([linear_max_val] * num_iters, dtype=np.int_)
+            v_pos[:num_iters - fade_iters] = np.linspace(linear_min_val, linear_max_val,
+                                                         num_iters - fade_iters, dtype=np.int_)
+
+            return alpha_anim, v_pos
+
+        def make_text_video(background_color,
+                            three_stripes_colors,
+                            video_name,
+                            num_iters,
+                            fade_iters,
+                            linear_min_val,
+                            linear_max_val,
+                            add_image,
+                            texts,
+                            use_flag=True,
+                            animate_flag=True,
+                            fade_in=True,
+                            fade_out=True,
+                            prev_color=None,
+                            ):
+            BG_IMG = Image.new("RGBA", RELEASE_SIZE, background_color)
+            if prev_color is not None:
+                PREV_BG = Image.new("RGBA", RELEASE_SIZE, prev_color)
+
+            assert len(three_stripes_colors) == 3
+            alpha_anim, v_pos = animate_textual(num_iters, fade_iters, linear_min_val, linear_max_val, fade_in, fade_out)
+            with imageio.get_writer(video_name + ".mp4", mode='I', fps=FPS, macro_block_size=1) as writer:
+                for val_alpha, v_p in zip(alpha_anim, v_pos):
+                    if not animate_flag:
+                        v_p = None
+                    FLAG_IMG = Image.new("RGBA", RELEASE_SIZE, background_color if prev_color is None else "#00000000")
+                    FLAG_IMG = np.array(FLAG_IMG).copy()
+                    FLAG_IMG[:v_p, 6 * V_LINE:7 * V_LINE, :] = np.array(three_stripes_colors[0])
+                    FLAG_IMG[:v_p, 7 * V_LINE:8 * V_LINE, :] = np.array(three_stripes_colors[1])
+                    FLAG_IMG[:v_p, 8 * V_LINE:9 * V_LINE, :] = np.array(three_stripes_colors[2])
+                    FLAG_IMG = Image.fromarray(FLAG_IMG, "RGBA")
+                    LETTERS_BASE = Image.new("RGBA", (RELEASE_SIZE[0], RELEASE_SIZE[1] // 12), "#00000000")
+
+                    if add_image is not None:
+                        base = add_image.copy()
+                        base.thumbnail((RELEASE_SIZE[0] - 2 * MARGINS, RELEASE_SIZE[1] - 2 * MARGINS))
+                        base = [base]
+                    else:
+                        base = []
+
+                    text_ims = [make_religion_name_img(t, b_img=LETTERS_BASE) for t in texts]
+                    new_img = v_concat_images(text_ims + base, background_color if prev_color is None else "#00000000")
+
+                    if use_flag:
+                        FLAG_IMG.paste(new_img, (0, (RELEASE_SIZE[1] - new_img.size[1]) // 2), new_img)
+                        # RU_FLAG_IMG.paste(ru_base, (MARGINS, MARGINS), ru_base)
+                        if prev_color is None:
+                            FLAG_IMG.putalpha(val_alpha)
+                    else:
+                        FLAG_IMG = Image.new("RGBA", FLAG_IMG.size, background_color)
+                        FLAG_IMG.paste(new_img, (0, (RELEASE_SIZE[1] - new_img.size[1]) // 2), new_img)
+                        if prev_color is None:
+                            FLAG_IMG.putalpha(val_alpha)
+
+                    background_img = BG_IMG.copy()
+                    if prev_color is not None:
+                        background_img = Image.blend(PREV_BG.copy(), background_img, val_alpha / 255)
+                        background_img.putalpha(255)
+
+                    frame = Image.alpha_composite(background_img, FLAG_IMG)
+                    frame = np.array(frame, dtype=np.uint8)
+                    writer.append_data(frame)
+
+        text_background_color = "#682828ff"
+
+        make_text_video(background_color=text_background_color,
+                        three_stripes_colors=[[255, 255, 255, 255], [0, 33, 118, 255], [201, 58, 51, 255]],
+                        video_name="Religion_intro",
+                        num_iters=5 * FPS // 2,
+                        fade_iters=FPS // 4,
+                        linear_min_val=0,
+                        linear_max_val=RELEASE_SIZE[1],
+                        add_image=img,
+                        texts=["КАКОВ ЛИК", "РОССИЙСКОЙ ВЕРЫ?"]
+                        )
+
+        make_text_video(background_color=text_background_color,
+                        three_stripes_colors=[[255, 255, 255, 0], [183, 71, 67, 255], [201, 58, 51, 0]],
+                        video_name="Religion_chapter_1",
+                        num_iters=4 * FPS // 2,
+                        fade_iters=FPS // 4,
+                        linear_min_val=0,
+                        linear_max_val=RELEASE_SIZE[1],
+                        add_image=None,
+                        texts=["1", " ", "РЕГИОНАЛЬНЫЕ СВЕДЕНИЯ"],
+                        use_flag=False
+                        )
+
+        make_text_video(background_color=text_background_color,
+                        three_stripes_colors=[[255, 255, 255, 0], [183, 71, 67, 255], [201, 58, 51, 0]],
+                        video_name="Religion_chapter_2",
+                        num_iters=4 * FPS // 2,
+                        fade_iters=FPS // 4,
+                        linear_min_val=0,
+                        linear_max_val=RELEASE_SIZE[1],
+                        add_image=None,
+                        texts=["2", " ", "ОТОБРАЖЕНИЕ ДАННЫХ"],
+                        use_flag=False
+                        )
+
+        make_text_video(background_color=text_background_color,
+                        three_stripes_colors=[[255, 255, 255, 0], [183, 71, 67, 255], [201, 58, 51, 0]],
+                        video_name="Religion_chapter_3",
+                        num_iters=4 * FPS // 2,
+                        fade_iters=FPS // 4,
+                        linear_min_val=0,
+                        linear_max_val=RELEASE_SIZE[1],
+                        add_image=None,
+                        texts=["3", " ", "КОМПОЗИЦИЯ И ВЫВОД"],
+                        use_flag=False
+                        )
+
+        make_text_video(background_color=text_background_color,
+                        three_stripes_colors=[[255, 255, 255, 255], [0, 33, 118, 255], [201, 58, 51, 255]],
+                        video_name="Religion_chapter_4",
+                        num_iters=4 * FPS // 2,
+                        fade_iters=FPS // 4,
+                        linear_min_val=0,
+                        linear_max_val=RELEASE_SIZE[1],
+                        add_image=img,
+                        texts=["С УВАЖЕНИЕМ", "К ВАШЕЙ ВЕРЕ!"],
+                        use_flag=True,
+                        animate_flag=False
+                        )
+
         with open(TARGET_BIN, "rb") as frb:
             res_data = pickle.load(frb)
         result = res_data.pop("result")
+
+        make_text_video(background_color="#00000000",
+                        three_stripes_colors=[[255, 255, 255, 255], [0, 33, 118, 255], [201, 58, 51, 255]],
+                        video_name="Religion_chapter_5",
+                        num_iters=3 * FPS // 2,
+                        fade_iters=FPS // 4,
+                        linear_min_val=0,
+                        linear_max_val=RELEASE_SIZE[1],
+                        add_image=result["rus_alpha"],
+                        texts=["ЛИК РОССИЙСКОЙ ВЕРЫ"],
+                        use_flag=False,
+                        animate_flag=False,
+                        fade_out=False
+                        )
+
+        make_text_video(background_color="#00000000",
+                        three_stripes_colors=[[255, 255, 255, 255], [0, 33, 118, 255], [201, 58, 51, 255]],
+                        video_name="Religion_chapter_6",
+                        num_iters=4 * FPS // 2,
+                        fade_iters=FPS // 4,
+                        linear_min_val=0,
+                        linear_max_val=RELEASE_SIZE[1],
+                        add_image=result["rus_alpha"],
+                        texts=["ЛИК РОССИЙСКОЙ ВЕРЫ"],
+                        use_flag=True,
+                        animate_flag=True,
+                        fade_out=False,
+                        fade_in=False,
+                        )
+
+        make_text_video(background_color=text_background_color,
+                        three_stripes_colors=[[255, 255, 255, 255], [0, 33, 118, 255], [201, 58, 51, 255]],
+                        video_name="Religion_chapter_7",
+                        num_iters=3 * FPS // 2,
+                        fade_iters=FPS // 2,
+                        linear_min_val=0,
+                        linear_max_val=RELEASE_SIZE[1],
+                        add_image=result["rus_alpha"],
+                        texts=["ЛИК РОССИЙСКОЙ ВЕРЫ"],
+                        use_flag=True,
+                        animate_flag=False,
+                        fade_in=True,
+                        fade_out=False,
+                        prev_color="#000000ff"
+                        )
+
         num_religions = len(list(res_data.keys()))
         # 9 Religions
         res_data = dict(sorted(res_data.items()))
@@ -1161,9 +1362,96 @@ def portrait(folder):
         res_data["Прочие"] = others
 
         fade_in_iters = FPS // 2
-        total_iters = 2 * FPS
+        total_iters = 3 * FPS
 
         part_3_queue = []
+        religions_list = sorted(LISTED_RELIGIONS)
+        _others = religions_list.pop(religions_list.index("Прочие"))
+        religions_list.append(_others)
+
+        rel_mapping = {
+            "Православие": "Прав.",
+            "Ислам": "Исл.",
+            "Буддизм": "Буд.",
+            "Старообрядчество": "Стар.",
+            "Атеизм": "Ате.",
+            "Своя вера": "Своя",
+            "Прочие": "Прч.",
+            "Католицизм": "Кат.",
+            "Язычество": "Языч.",
+        }
+
+        base_religions_dict = {lr: 0 for lr in religions_list}
+        # base_religions_dict = {**{"Субъект": ""}, **base_religions_dict}
+        all_analytica = []
+        data_analytica = []
+        j=0
+        all_subjects = []
+        for subject_name, group in data.groupby("Субъект"):
+            cur_dict = deepcopy(base_religions_dict)
+            for row_index, row in group.iterrows():
+                cur_dict[row["Религия"]] = round(float(row["Значение"]), ndigits=1)
+            # cur_dict["Субъект"] = subject_name
+            subject_name = subject_name.replace("область", "обл.")
+            subject_name = subject_name.replace("Республика", "Респ.")
+            subject_name = subject_name.replace("Край", "Кр.")
+            subject_name = subject_name.replace("Автономная", "Авт.")
+            subject_name = subject_name.replace("автономная", "авт.")
+            subject_name = subject_name.replace("Народная", "Нар.")
+            subject_name = subject_name.replace("автономный округ", "АО")
+            cur_data = [{"Субъект": subject_name + " " * (28 - len(subject_name)), "Религия": rel_mapping[rel], "Значение": val} for rel, val in cur_dict.items()]
+            data_analytica += cur_data
+            all_subjects.append(subject_name)
+
+            j += 1
+            if j % 23 == 0:
+                all_analytica.append(pd.DataFrame(data_analytica))
+                data_analytica = []
+
+        all_analytica.append(pd.DataFrame(data_analytica))
+
+        max_size = max([len(sn) for sn in all_subjects])
+
+        data_frame_iters = 2 * FPS
+        data_fade_iters = FPS // 4
+        alpha_anim = np.array([255] * data_frame_iters, dtype=np.uint8)
+        alpha_anim[:data_fade_iters] = np.linspace(0, 255, data_fade_iters, dtype=np.uint8)
+        alpha_anim[-data_fade_iters:] = np.linspace(255, 0, data_fade_iters, dtype=np.uint8)
+        index_anim = np.arange(len(all_analytica), dtype=np.int32)
+        index_anim = np.repeat(index_anim, data_frame_iters)
+        alpha_anim = np.tile(alpha_anim, len(all_analytica))
+
+        release_img = Image.new("RGBA", RELEASE_SIZE, text_background_color)
+        with imageio.get_writer("Religions_part_1.mp4", mode='I', fps=FPS, macro_block_size=1) as writer:
+            for i, alpha_val in zip(index_anim, alpha_anim):
+                res_analytica = all_analytica[i].pivot(index="Субъект", columns="Религия", values="Значение")
+                sns.set(rc={'axes.facecolor': PATCH_COLOR, 'figure.facecolor': PATCH_COLOR})
+                ax.clear()
+                fig, ax = plt.subplots(figsize=((len(res_analytica.index) + 1), 14)) #dpi=400
+                plt.gcf().set_size_inches(16 // 2, (len(res_analytica.index) + 1) // 2)
+
+                sns.heatmap(res_analytica, ax=ax, annot=True, fmt='g',
+                            cmap="YlOrRd", cbar=False, square=True, linecolor="black")
+                ax.set_facecolor(BG_COLOR)
+                ax.set_xlabel(None)
+                ax.set_ylabel(None)
+                ax.xaxis.tick_top()  # x axis on top
+                ax.xaxis.set_label_position('top')
+                ax.spines[:].set_visible(False)
+                plt.legend([], [], frameon=False)
+                fig.tight_layout()
+                fig.subplots_adjust(top=0.95, right=1.05)
+                fig.canvas.draw()
+                mat = np.array(fig.canvas.renderer._renderer)
+                ig = Image.fromarray(mat, "RGBA").convert("RGBA").copy()
+                ig = upscale_to_w(ig, (RELEASE_SIZE[0] - 2 * MARGINS, RELEASE_SIZE[1] - 2 * MARGINS))
+                ig.putalpha(alpha_val)
+                frame = release_img.copy()
+                frame.paste(ig, (MARGINS, MARGINS), ig)
+                frame = np.array(frame, dtype=np.uint8)
+                writer.append_data(frame)
+                plt.cla()
+                plt.close(fig)
 
         with imageio.get_writer("Religions_part_2.mp4", mode='I', fps=FPS, macro_block_size=1) as writer:
             for cur_religion, images in res_data.items():
@@ -1196,6 +1484,8 @@ def portrait(folder):
 
                     frame = np.array(release_img, dtype=np.uint8)
                     writer.append_data(frame)
+
+        exit(0)
 
         with imageio.get_writer("Religions_part_3.mp4", mode='I', fps=FPS, macro_block_size=1) as writer:
             num_religions_per_frame = 3
@@ -1232,18 +1522,15 @@ def portrait(folder):
                     frame = np.array(release_img, dtype=np.uint8)
                     writer.append_data(frame)
 
-            release_img = Image.new("RGBA", RELEASE_SIZE, BG_COLOR)
-            result_img = result["overlay"]
-            name_img = make_religion_name_img("ЛИК РОССИЙСКОЙ ВЕРЫ")
-            frame = v_concat_images([name_img, result_img])
-            frame.thumbnail((RELEASE_SIZE[0] - MARGINS, RELEASE_SIZE[1] - MARGINS), Image.LANCZOS)
-            release_img.paste(frame, (MARGINS, (RELEASE_SIZE[1] - frame.size[1]) // 2))
-            frame = np.array(release_img, dtype=np.uint8)
-            for k in range(2 * total_iters):
-                writer.append_data(frame)
-
-        exit(0)
-
+            # release_img = Image.new("RGBA", RELEASE_SIZE, BG_COLOR)
+            # result_img = result["overlay"]
+            # name_img = make_religion_name_img("ЛИК РОССИЙСКОЙ ВЕРЫ")
+            # frame = v_concat_images([name_img, result_img])
+            # frame.thumbnail((RELEASE_SIZE[0] - MARGINS, RELEASE_SIZE[1] - MARGINS), Image.LANCZOS)
+            # release_img.paste(frame, (MARGINS, (RELEASE_SIZE[1] - frame.size[1]) // 2))
+            # frame = np.array(release_img, dtype=np.uint8)
+            # for k in range(2 * total_iters):
+            #     writer.append_data(frame)
 
         #print(result)
         #print(len(list(res_data.keys())))
@@ -1298,6 +1585,8 @@ def portrait(folder):
             return overlay, overlay_rualpha
 
         rel_img_nc, _ = save_img(cur_religion_img.copy(), "not_clustered", alpha=cur_alpha.copy())
+        part_2_img, _ = save_img(cur_religion_img.copy(), "not_clustered_p2", alpha=None)
+        part_2_img.putalpha(255)
         data_img, data_rualpha_img = save_img(img.copy(), "data")
 
         if i >= 3:
@@ -1364,12 +1653,13 @@ def portrait(folder):
         overlay_rualpha = overlay.copy()
         overlay_rualpha.putalpha(rus_alpha)
         overlay_rualpha.save(cur_religion + f"_overlay_rus_alpha.png")
+
         before_img = cur_religion_img.copy()
         before_img.putalpha(255)
         before_img.save(cur_religion + "_before.png")
 
         religion_name_img = make_religion_name_img(cur_religion)
-        ordered_images = [religion_name_img, before_img, multiply_symbol, data_img, color_bar_img,
+        ordered_images = [religion_name_img, part_2_img, multiply_symbol, data_img, color_bar_img,
                           equal_symbol, rel_img_nc, overlay]
         res_data[cur_religion] = ordered_images
 
